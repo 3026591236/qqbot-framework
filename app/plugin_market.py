@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import httpx
 
@@ -44,8 +45,12 @@ def _remote_market() -> dict[str, MarketPlugin]:
     if not market_url:
         return {}
     try:
-        with httpx.Client(timeout=10) as client:
-            resp = client.get(market_url)
+        # GitHub raw has CDN caching; add a cache-busting query param to reduce stale market.json reads
+        fetch_url = market_url
+        sep = "&" if "?" in fetch_url else "?"
+        fetch_url = f"{fetch_url}{sep}_ts={int(time.time())}"
+        with httpx.Client(timeout=10, follow_redirects=True) as client:
+            resp = client.get(fetch_url, headers={"Cache-Control": "no-cache"})
             resp.raise_for_status()
             payload = resp.json()
         result = {}
