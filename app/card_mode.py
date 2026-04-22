@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from app.config import settings
+from app.db import get_conn
 from app.renderers.card_image import (
     DEFAULT_MAX_CARD_HEIGHT,
     paginate_info_card_lines,
@@ -32,13 +33,37 @@ def normalize_card_mode(value: str) -> str:
     return mapping.get(value, value)
 
 
-def get_card_mode() -> str:
+def _ensure_group_card_mode_table() -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS group_card_mode_settings (
+                group_id INTEGER PRIMARY KEY,
+                card_mode TEXT NOT NULL DEFAULT 'text',
+                updated_at TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+
+
+def get_card_mode(group_id: int | None = None) -> str:
+    if group_id:
+        _ensure_group_card_mode_table()
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT card_mode FROM group_card_mode_settings WHERE group_id=?",
+                (int(group_id),),
+            ).fetchone()
+            if row is not None:
+                mode = normalize_card_mode(row["card_mode"])
+                if mode in {"text", "image"}:
+                    return mode
     mode = normalize_card_mode(os.getenv(CARD_MODE_KEY, DEFAULT_CARD_MODE))
     return mode if mode in {"text", "image"} else "text"
 
 
-def get_card_mode_label() -> str:
-    return "图片卡片" if get_card_mode() == "image" else "文字卡片"
+def get_card_mode_label(group_id: int | None = None) -> str:
+    return "图片卡片" if get_card_mode(group_id) == "image" else "文字卡片"
 
 
 def _save_env_value(key: str, value: str) -> None:
@@ -64,6 +89,20 @@ def set_card_mode(mode: str) -> str:
         raise ValueError("卡片模式只能是 text/image 或 文字/图片")
     os.environ[CARD_MODE_KEY] = mode
     _save_env_value(CARD_MODE_KEY, mode)
+    return mode
+
+
+def set_group_card_mode(group_id: int, mode: str) -> str:
+    mode = normalize_card_mode(mode)
+    if mode not in {"text", "image"}:
+        raise ValueError("卡片模式只能是 text/image 或 文字/图片")
+    _ensure_group_card_mode_table()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO group_card_mode_settings (group_id, card_mode, updated_at) VALUES (?, ?, datetime('now')) "
+            "ON CONFLICT(group_id) DO UPDATE SET card_mode=excluded.card_mode, updated_at=excluded.updated_at",
+            (int(group_id), mode),
+        )
     return mode
 
 

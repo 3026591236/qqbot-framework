@@ -13,6 +13,19 @@ KNOWN_PREFIXES = [
     "插件菜单",
     "群管菜单",
     "卡片菜单",
+    "发卡菜单",
+    "发卡帮助",
+    "设置发卡管理员",
+    "删除发卡管理员",
+    "发卡管理员列表",
+    "设置签到首日奖励",
+    "设置连续签到奖励",
+    "删除连续签到奖励",
+    "设置邀请奖励",
+    "删除邀请奖励",
+    "添加CDK",
+    "卡池状态",
+    "邀请统计",
     "语录菜单",
     "龙虾菜单",
     "ping",
@@ -79,6 +92,7 @@ class UnknownCommandHintPlugin:
             or text.startswith("签到")
             or text.startswith("积分")
             or text.startswith("卡片")
+            or text.startswith("发卡")
             or text.startswith("发")
             or text.startswith("AI")
             or text.startswith("问AI")

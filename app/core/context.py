@@ -40,7 +40,7 @@ class MessageContext:
         return parts[1].strip() if len(parts) > 1 else ""
 
     async def reply(self, message: str | list[dict]) -> None:
-        if isinstance(message, str) and get_card_mode() == "image":
+        if isinstance(message, str) and get_card_mode(self.group_id) == "image":
             image_urls = render_text_to_card_images(message)
             for image_url in image_urls:
                 await self.reply_image(image_url)

@@ -175,7 +175,7 @@ def _get_first_day_pool(group_id: int) -> str:
     _ensure_group_settings(group_id)
     with get_conn() as conn:
         row = conn.execute("SELECT first_day_pool FROM cdk_reward_settings WHERE group_id=?", (group_id,)).fetchone()
-        return str((row or {}).get("first_day_pool") if row else "")
+        return str(row["first_day_pool"]) if row is not None else ""
 
 
 def _set_first_day_pool(group_id: int, pool_name: str) -> None:
