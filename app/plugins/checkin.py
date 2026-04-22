@@ -1,6 +1,11 @@
 from app.core.plugin import CommandPlugin, PluginMeta
 from app.services import daily_checkin, get_checkin_status, get_points_ranking, makeup_checkin
 
+try:
+    from user_plugins.cdk_rewards import process_checkin_reward
+except Exception:
+    process_checkin_reward = None
+
 plugin = None
 
 checkin = CommandPlugin(
@@ -28,6 +33,8 @@ async def on_checkin(ctx):
             f"连续签到：{result['streak']} 天\n"
             f"累计签到：{result['total_checkins']} 天"
         )
+        if process_checkin_reward is not None:
+            await process_checkin_reward(ctx, result)
     else:
         await ctx.reply(
             f"今天已经签过了\n"

@@ -13,6 +13,11 @@ try:
 except Exception:  # optional plugin hook
     save_pending_invite = None
 
+try:
+    from user_plugins.cdk_rewards import process_invite_reward
+except Exception:  # optional plugin hook
+    process_invite_reward = None
+
 
 class BotApp:
     def __init__(self, api_base: str = "http://127.0.0.1:5700") -> None:
@@ -26,6 +31,8 @@ class BotApp:
         post_type = event.get("post_type")
         if post_type == "request":
             return await self.handle_request_event(event)
+        if post_type == "notice":
+            return await self.handle_notice_event(event)
         if post_type != "message":
             return False
 
@@ -42,6 +49,16 @@ class BotApp:
             api=self.api,
         )
         return await self.router.dispatch(ctx)
+
+    async def handle_notice_event(self, event: Dict[str, Any]) -> bool:
+        if process_invite_reward is not None:
+            try:
+                handled = await process_invite_reward(self.api, event)
+                if handled:
+                    return True
+            except Exception:
+                pass
+        return False
 
     async def handle_request_event(self, event: Dict[str, Any]) -> bool:
         if not settings.auto_notify_group_invite:
