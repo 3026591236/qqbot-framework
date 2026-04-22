@@ -12,6 +12,7 @@ from app.core.bot import BotApp
 from app.db import init_db
 from app.logging_setup import setup_logging
 from app.plugin_loader import discover_all_plugins
+from app.web.panel import router as panel_router
 
 try:
     from user_plugins.update_checker import auto_update_notifier
@@ -23,7 +24,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.app_name)
 app.mount("/static", StaticFiles(directory=settings.data_dir), name="static")
-bot = BotApp(api_base=settings.onebot_api_base)
+app.include_router(panel_router)
+bot = BotApp(api_base=settings.onebot_api_base, adapter_name=settings.adapter)
 
 for plugin in discover_all_plugins():
     bot.register_plugin(plugin)

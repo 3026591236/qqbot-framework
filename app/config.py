@@ -20,6 +20,7 @@ class Settings:
     host: str = os.getenv("QQBOT_HOST", "0.0.0.0")
     port: int = int(os.getenv("QQBOT_PORT", "9000"))
     debug: bool = os.getenv("QQBOT_DEBUG", "false").lower() == "true"
+    adapter: str = os.getenv("QQBOT_ADAPTER", "onebot")
     onebot_api_base: str = os.getenv("ONEBOT_API_BASE", "http://127.0.0.1:5700")
     command_prefix: str = os.getenv("QQBOT_COMMAND_PREFIX", "/")
     log_level: str = os.getenv("QQBOT_LOG_LEVEL", "INFO")
@@ -38,6 +39,7 @@ class Settings:
     lobster_agent_id: str = os.getenv("QQBOT_LOBSTER_AGENT_ID", "")
     lobster_child_session_key: str = os.getenv("QQBOT_LOBSTER_CHILD_SESSION_KEY", "")
     lobster_notify_policy: str = os.getenv("QQBOT_LOBSTER_NOTIFY_POLICY", "done_only")
+    panel_password: str = os.getenv("QQBOT_PANEL_PASSWORD", "")
 
 
 settings = Settings()
