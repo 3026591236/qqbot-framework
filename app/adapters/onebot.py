@@ -7,6 +7,10 @@ class OneBotAPI:
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url.rstrip("/")
 
+    async def get_status(self) -> dict:
+        """OneBot get_status."""
+        return await self._post("get_status", {})
+
     async def _post(self, action: str, payload: dict) -> dict:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.post(f"{self.base_url}/{action}", json=payload)
