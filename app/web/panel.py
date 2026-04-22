@@ -5,6 +5,8 @@ import hmac
 import json
 import secrets
 import subprocess
+import time
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,8 @@ from app.card_mode import (
 )
 from app.config import settings
 from app.db import _ensure_column, get_conn
+from app.plugin_registry import list_plugins as list_plugin_registry
+from app.plugin_registry import set_enabled as set_plugin_enabled
 from user_plugins.group_admin import get_auto_recall_seconds
 
 router = APIRouter(prefix="/panel", tags=["panel"])
@@ -31,6 +35,8 @@ NAPCAT_WEBUI_CONFIG = BASE_DIR / "napcat" / "config" / "webui.json"
 PANEL_RUNTIME_DIR = Path(settings.data_dir) / "panel"
 PANEL_QRCODE_PATH = PANEL_RUNTIME_DIR / "qrcode.png"
 PANEL_SESSION_FILE = PANEL_RUNTIME_DIR / "session_token.txt"
+PANEL_LOGIN_STATE_FILE = PANEL_RUNTIME_DIR / "login_state.json"
+PANEL_BACKUP_DIR = PANEL_RUNTIME_DIR / "backups"
 APP_LOG_PATH = Path("/tmp/qqbot-framework-web.log")
 NAPCAT_CONTAINER_NAME = "napcat"
 NAPCAT_CONTAINER_QRCODE_PATH = "/app/napcat/cache/qrcode.png"
@@ -63,6 +69,20 @@ class SendMessageRequest(BaseModel):
     image_url: str = ""
 
 
+class PanelPluginToggleRequest(BaseModel):
+    name: str
+    enabled: bool
+
+
+class SelfcheckRequest(BaseModel):
+    # How many log lines to include
+    log_lines: int = 120
+
+
+class BackupRequest(BaseModel):
+    include_sqlite: bool = True
+
+
 def _require_panel_enabled() -> None:
     if not settings.panel_password:
         raise HTTPException(status_code=503, detail="panel password is not configured")
@@ -79,8 +99,24 @@ def _write_session_token(token: str) -> None:
     PANEL_SESSION_FILE.write_text(token, encoding="utf-8")
 
 
+def _client_ip(request: Request) -> str:
+    # best-effort; relies on infra to pass real client IP (e.g. proxy headers)
+    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if xff:
+        return xff
+    return request.client.host if request.client else ""
+
+
 def _is_authorized(request: Request) -> bool:
     _require_panel_enabled()
+
+    # Optional IP allowlist gate
+    allow_ips = getattr(settings, "panel_allow_ips", ()) or ()
+    if allow_ips:
+        ip = _client_ip(request)
+        if ip not in set(allow_ips):
+            return False
+
     cookie_token = request.cookies.get("qqbot_panel_session") or ""
     header_token = request.headers.get("x-panel-token") or ""
     provided = cookie_token or header_token
@@ -90,7 +126,94 @@ def _is_authorized(request: Request) -> bool:
 
 def _auth_guard(request: Request) -> None:
     if not _is_authorized(request):
+        # If IP allowlist is enabled, distinguish to help ops.
+        allow_ips = getattr(settings, "panel_allow_ips", ()) or ()
+        if allow_ips:
+            raise HTTPException(status_code=403, detail="forbidden")
         raise HTTPException(status_code=401, detail="unauthorized")
+
+
+def _read_login_state() -> dict[str, Any]:
+    if PANEL_LOGIN_STATE_FILE.exists():
+        try:
+            return json.loads(PANEL_LOGIN_STATE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _write_login_state(state: dict[str, Any]) -> None:
+    PANEL_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    PANEL_LOGIN_STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _mark_login_action(action: str, note: str = "") -> None:
+    state = _read_login_state()
+    state.update(
+        {
+            "last_action": action,
+            "last_action_at": int(time.time()),
+            "last_note": note,
+        }
+    )
+    _write_login_state(state)
+
+
+def _tail_container_logs(container: str, lines: int = 200) -> str:
+    lines = max(1, min(2000, int(lines)))
+    try:
+        r = subprocess.run(
+            ["docker", "logs", "--tail", str(lines), container],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return (r.stdout or "")[-200_000:]
+    except Exception as exc:
+        return f"(failed to read docker logs: {exc})"
+
+
+def _backup_runtime(include_sqlite: bool = True) -> dict[str, Any]:
+    """Create a downloadable zip snapshot of runtime config/data.
+
+    IMPORTANT: This may include sensitive data (.env, tokens, sqlite). Keep it authenticated.
+    """
+    PANEL_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    out = PANEL_BACKUP_DIR / f"qqbot_backup_{ts}.zip"
+
+    base = BASE_DIR
+    paths: list[tuple[Path, str]] = []
+
+    # Core runtime config
+    for rel in [
+        Path(".env"),
+        Path("data") / "plugins.json",
+        Path("data") / "group_card_mode.json",
+        Path("data") / "qqbot.sqlite3",
+        Path("napcat") / "config",
+    ]:
+        p = base / rel
+        if not p.exists():
+            continue
+        if p.name == "qqbot.sqlite3" and not include_sqlite:
+            continue
+        paths.append((p, str(rel)))
+
+    def add_path(p: Path, arc: str) -> None:
+        if p.is_dir():
+            for child in sorted(p.rglob("*")):
+                if child.is_file():
+                    rel_arc = f"{arc}/{child.relative_to(p).as_posix()}"
+                    z.write(child, rel_arc)
+        else:
+            z.write(p, arc)
+
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        for p, arc in paths:
+            add_path(p, arc)
+
+    return {"ok": True, "path": str(out), "url": f"/panel/api/backup/download?file={out.name}"}
 
 
 async def _onebot_post(action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -404,6 +527,41 @@ async function login(){
         <pre id="logs">加载中...</pre>
       </div>
       <div class="card" style="grid-column: 1 / -1;">
+        <h2>插件管理</h2>
+        <p class="muted">列出插件注册信息（启用/禁用）。禁用后需要重启框架进程才会生效（因为插件在启动时加载）。</p>
+        <div class="row">
+          <button class="secondary" onclick="loadPlugins()">刷新插件列表</button>
+        </div>
+        <pre id="plugins">加载中...</pre>
+        <div class="row">
+          <input id="pluginName" placeholder="插件名（name）" />
+          <select id="pluginEnabled"><option value="true">启用</option><option value="false">禁用</option></select>
+          <button onclick="togglePlugin()">保存</button>
+        </div>
+        <pre id="pluginResult" class="muted">未操作</pre>
+      </div>
+
+      <div class="card" style="grid-column: 1 / -1;">
+        <h2>一键自检 / 保活信息</h2>
+        <p class="muted">汇总 OneBot/NapCat 状态、关键端口、最近掉线原因（日志关键词）。</p>
+        <div class="row">
+          <input id="selfcheckLines" value="120" placeholder="日志行数" />
+          <button onclick="runSelfcheck()">运行自检</button>
+        </div>
+        <pre id="selfcheck" class="muted">未运行</pre>
+      </div>
+
+      <div class="card" style="grid-column: 1 / -1;">
+        <h2>备份下载</h2>
+        <p class="muted">生成一个 zip 备份（可能包含敏感信息：.env / napcat config / sqlite）。仅在你信任的环境下载保存。</p>
+        <div class="row">
+          <select id="backupIncludeSqlite"><option value="true">包含数据库 sqlite</option><option value="false">不包含数据库</option></select>
+          <button onclick="createBackup()">生成备份</button>
+        </div>
+        <pre id="backup" class="muted">未生成</pre>
+      </div>
+
+      <div class="card" style="grid-column: 1 / -1;">
         <h2>原始状态</h2>
         <pre id="raw">加载中...</pre>
       </div>
@@ -489,12 +647,38 @@ async function login(){
       const data = await jpost('/panel/api/send', {kind, target_id: Number(target), text, image_url});
       document.getElementById('sendResult').innerText = JSON.stringify(data, null, 2);
     }
+    async function loadPlugins() {
+      const data = await jget('/panel/api/plugins');
+      document.getElementById('plugins').innerText = JSON.stringify(data, null, 2);
+    }
+    async function togglePlugin() {
+      const name = document.getElementById('pluginName').value.trim();
+      const enabled = document.getElementById('pluginEnabled').value === 'true';
+      if (!name) return;
+      const data = await jpost('/panel/api/plugins/toggle', {name, enabled});
+      document.getElementById('pluginResult').innerText = JSON.stringify(data, null, 2);
+      await loadPlugins();
+    }
+    async function runSelfcheck() {
+      const log_lines = Number(document.getElementById('selfcheckLines').value || '120');
+      const data = await jpost('/panel/api/selfcheck', {log_lines});
+      document.getElementById('selfcheck').innerText = JSON.stringify(data, null, 2);
+    }
+    async function createBackup() {
+      const include_sqlite = document.getElementById('backupIncludeSqlite').value === 'true';
+      const data = await jpost('/panel/api/backup', {include_sqlite});
+      document.getElementById('backup').innerText = JSON.stringify(data, null, 2);
+      if (data.url) {
+        // open download url in new tab
+        window.open(data.url, '_blank');
+      }
+    }
     async function loadLogs() {
       const lines = Number(document.getElementById('logLines').value || '200');
       const data = await jget('/panel/api/logs?lines=' + encodeURIComponent(lines));
       document.getElementById('logs').innerText = data.content || '(空)';
     }
-    loadStatus(); refreshQrcode(); loadLogs();
+    loadStatus(); refreshQrcode(); loadLogs(); loadPlugins();
   </script>
 </body></html>
     """
@@ -534,6 +718,7 @@ async def panel_status(request: Request) -> dict[str, Any]:
         "onebot_status": onebot_status,
         "napcat_login_info": napcat_login_info,
         "napcat_webui_url": _napcat_webui_url_for_request(request),
+        "panel_login_state": _read_login_state(),
         "card_mode": {"mode": get_card_mode(), "label": get_card_mode_label()},
     }
 
@@ -586,8 +771,10 @@ async def panel_logs(request: Request, lines: int = 200) -> dict[str, Any]:
 async def panel_export_qrcode(request: Request) -> dict[str, Any]:
     _auth_guard(request)
     try:
+        _mark_login_action("export_qrcode")
         return _export_qrcode()
     except Exception as exc:
+        _mark_login_action("export_qrcode_failed", str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -610,6 +797,87 @@ async def panel_send_message(request: Request, body: SendMessageRequest) -> dict
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/api/plugins")
+async def panel_list_plugins(request: Request) -> dict[str, Any]:
+    _auth_guard(request)
+    return {
+        "ok": True,
+        "note": "This reflects registry metadata recorded at startup-time discovery; toggles affect next restart.",
+        "plugins": list_plugin_registry(),
+    }
+
+
+@router.post("/api/plugins/toggle")
+async def panel_toggle_plugin(request: Request, body: PanelPluginToggleRequest) -> dict[str, Any]:
+    _auth_guard(request)
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    set_plugin_enabled(name, bool(body.enabled))
+    return {"ok": True, "name": name, "enabled": bool(body.enabled), "restart_required": True}
+
+
+@router.post("/api/selfcheck")
+async def panel_selfcheck(request: Request, body: SelfcheckRequest) -> dict[str, Any]:
+    _auth_guard(request)
+
+    # 1) basic HTTP probes
+    onebot_probe: dict[str, Any]
+    try:
+        onebot_probe = await _onebot_post("get_status")
+    except Exception as exc:
+        onebot_probe = {"ok": False, "error": str(exc)}
+
+    napcat_probe: dict[str, Any]
+    try:
+        napcat_probe = await _napcat_qqlogin_post("/api/QQLogin/GetQQLoginInfo")
+    except Exception as exc:
+        napcat_probe = {"ok": False, "error": str(exc)}
+
+    # 2) ports
+    ports_out = ""
+    try:
+        r = subprocess.run(["sh", "-lc", "ss -lntp | egrep ':(9000|3000|6099)\\b' || true"], capture_output=True, text=True, check=False)
+        ports_out = (r.stdout or r.stderr or "").strip()
+    except Exception as exc:
+        ports_out = str(exc)
+
+    # 3) napcat logs keyword scan
+    logs = _tail_container_logs(NAPCAT_CONTAINER_NAME, lines=int(body.log_lines or 120))
+    keywords = ["KickedOffLine", "登录已失效", "下线", "ErrCode", "二维码", "扫码", "验证", "online"]
+    hits: list[str] = []
+    for line in logs.splitlines()[-2000:]:
+        if any(k in line for k in keywords):
+            hits.append(line)
+    hits = hits[-80:]
+
+    return {
+        "ok": True,
+        "now": int(time.time()),
+        "onebot_get_status": onebot_probe,
+        "napcat_login_info": napcat_probe,
+        "ports": ports_out,
+        "napcat_log_hits": hits,
+        "napcat_webui_url": _napcat_webui_url_for_request(request),
+    }
+
+
+@router.post("/api/backup")
+async def panel_create_backup(request: Request, body: BackupRequest) -> dict[str, Any]:
+    _auth_guard(request)
+    return _backup_runtime(include_sqlite=bool(body.include_sqlite))
+
+
+@router.get("/api/backup/download")
+async def panel_download_backup(request: Request, file: str = Query(...)) -> FileResponse:
+    _auth_guard(request)
+    name = Path(file).name
+    p = PANEL_BACKUP_DIR / name
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(p, filename=name)
 
 
 @router.get("/qrcode.png")

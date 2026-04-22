@@ -40,6 +40,9 @@ class Settings:
     lobster_child_session_key: str = os.getenv("QQBOT_LOBSTER_CHILD_SESSION_KEY", "")
     lobster_notify_policy: str = os.getenv("QQBOT_LOBSTER_NOTIFY_POLICY", "done_only")
     panel_password: str = os.getenv("QQBOT_PANEL_PASSWORD", "")
+    # Optional: restrict who can access /panel by client IP.
+    # Example: "1.2.3.4,5.6.7.8" (empty means allow all)
+    panel_allow_ips: tuple[str, ...] = tuple(filter(None, os.getenv("QQBOT_PANEL_ALLOW_IPS", "").split(",")))
 
 
 settings = Settings()
