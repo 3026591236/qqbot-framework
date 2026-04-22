@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from app.auth import is_owner
-from app.card_mode import _save_env_value
+from app.card_mode import _save_env_value, get_card_style_label, list_card_style_choices, normalize_card_style
 from app.core.plugin import CommandPlugin, PluginMeta
 
 STYLE_KEY = "QQBOT_CARD_STYLE"
@@ -19,13 +19,14 @@ plugin = CommandPlugin(
 
 @plugin.handle
 async def on_card_style(ctx):
-    current = os.getenv(STYLE_KEY, "light").strip().lower() or "light"
+    current_key = normalize_card_style(os.getenv(STYLE_KEY, "light"))
     await ctx.reply(
-        "当前图片卡片风格\n"
-        f"风格：{current}\n"
-        "可用：light / dark / compact / minimal\n"
-        "设置：切换卡片风格 light\n"
-        "（仅影响机器人生成的图片卡片）"
+        "图片卡片风格（机器人渲染图片卡片专用）\n"
+        f"当前：{get_card_style_label(current_key)}\n"
+        f"可选：{list_card_style_choices()}\n"
+        "用法：切换卡片风格 <风格名>\n"
+        "示例：切换卡片风格 黑金\n"
+        "（支持中文别名）"
     )
 
 
@@ -43,13 +44,24 @@ async def on_switch(ctx):
         await ctx.reply("只有主人可以切换图片卡片风格")
         return
 
-    style = (ctx.args or "").strip().lower()
+    style = normalize_card_style(ctx.args)
     if not style:
-        await ctx.reply("用法：切换卡片风格 light\n可选：light/dark/compact/minimal")
+        await ctx.reply(
+            "用法：切换卡片风格 <风格名>\n"
+            f"可选：{list_card_style_choices()}\n"
+            "示例：切换卡片风格 紧凑"
+        )
         return
 
-    if style not in {"light", "dark", "compact", "minimal"}:
-        await ctx.reply("不支持的风格。可选：light/dark/compact/minimal")
+    # validate
+    from app.renderers.card_image import CARD_STYLES
+
+    if style not in set(CARD_STYLES.keys()):
+        await ctx.reply(
+            "不支持的风格。\n"
+            f"可选：{list_card_style_choices()}\n"
+            "示例：切换卡片风格 樱粉"
+        )
         return
 
     os.environ[STYLE_KEY] = style

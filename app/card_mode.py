@@ -8,12 +8,61 @@ from app.config import settings
 from app.db import get_conn
 from app.renderers.card_image import (
     DEFAULT_MAX_CARD_HEIGHT,
+    list_card_styles,
     paginate_info_card_lines,
     render_info_card,
 )
 
 CARD_STYLE_KEY = "QQBOT_CARD_STYLE"
 DEFAULT_CARD_STYLE = os.getenv(CARD_STYLE_KEY, "light").strip().lower() or "light"
+
+
+def normalize_card_style(value: str | None) -> str:
+    v = (value or "").strip().lower()
+    mapping = {
+        # internal keys
+        "light": "light",
+        "dark": "dark",
+        "compact": "compact",
+        "minimal": "minimal",
+        "sakura": "sakura",
+        "mint": "mint",
+        "paper": "paper",
+        "blackgold": "blackgold",
+        # chinese aliases
+        "浅色": "light",
+        "默认": "light",
+        "经典": "light",
+        "深色": "dark",
+        "夜间": "dark",
+        "夜蓝": "dark",
+        "紧凑": "compact",
+        "密集": "compact",
+        "极简": "minimal",
+        "简洁": "minimal",
+        "樱粉": "sakura",
+        "粉": "sakura",
+        "薄荷": "mint",
+        "清爽": "mint",
+        "纸质": "paper",
+        "暖黄": "paper",
+        "黑金": "blackgold",
+        "高级": "blackgold",
+    }
+    return mapping.get(v, v or "light")
+
+
+def get_card_style_label(style: str | None = None) -> str:
+    key = normalize_card_style(style or os.getenv(CARD_STYLE_KEY, DEFAULT_CARD_STYLE))
+    for item in list_card_styles():
+        if item.get("key") == key:
+            return f"{item.get('label')}（{key}）"
+    return f"{key}"
+
+
+def list_card_style_choices() -> str:
+    items = list_card_styles()
+    return " / ".join(f"{x['label']}({x['key']})" for x in items)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_FILE = BASE_DIR / ".env"
@@ -132,9 +181,9 @@ def render_text_to_card_images(message: str, title: str = "QQ机器人消息", s
     if not raw_lines:
         raw_lines = ["（空消息）"]
 
-    style_key = (style or os.getenv(CARD_STYLE_KEY, DEFAULT_CARD_STYLE)).strip().lower() or "light"
+    style_key = normalize_card_style(style or os.getenv(CARD_STYLE_KEY, DEFAULT_CARD_STYLE))
 
-    subtitle = f"图片卡片风格：{style_key}"
+    subtitle = f"图片卡片风格：{get_card_style_label(style_key)}"
     body = raw_lines
     if len(raw_lines) >= 2 and len(raw_lines[0]) <= 22:
         title = raw_lines[0]

@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 CARD_STYLES: dict[str, dict] = {
     # Default (existing) light style
     "light": {
+        "label": "浅色 · 蓝紫",
         "card_bg": "#f3f6fb",
         "panel_bg": "#ffffff",
         "title": "#111827",
@@ -40,6 +41,7 @@ CARD_STYLES: dict[str, dict] = {
     },
     # Dark mode
     "dark": {
+        "label": "深色 · 夜蓝",
         "card_bg": "#0b1020",
         "panel_bg": "#0f172a",
         "title": "#e5e7eb",
@@ -61,6 +63,7 @@ CARD_STYLES: dict[str, dict] = {
     },
     # Compact: more content per page
     "compact": {
+        "label": "紧凑 · 信息密度",
         "card_bg": "#f8fafc",
         "panel_bg": "#ffffff",
         "title": "#0f172a",
@@ -82,6 +85,7 @@ CARD_STYLES: dict[str, dict] = {
     },
     # Minimal: clean, no accent bar
     "minimal": {
+        "label": "极简 · 白纸",
         "card_bg": "#ffffff",
         "panel_bg": "#ffffff",
         "title": "#111827",
@@ -101,7 +105,102 @@ CARD_STYLES: dict[str, dict] = {
         "bullet": "• ",
         "indent": "  ",
     },
+    # New: Sakura
+    "sakura": {
+        "label": "樱粉 · 柔和",
+        "card_bg": "#fff1f2",
+        "panel_bg": "#ffffff",
+        "title": "#111827",
+        "text": "#374151",
+        "muted": "#9f1239",
+        "accent": "#ec4899",
+        "border": "#fecdd3",
+        "radius": 28,
+        "outer": 26,
+        "inner": 34,
+        "line_spacing": 14,
+        "title_size": 38,
+        "subtitle_size": 22,
+        "text_size": 28,
+        "footer_size": 22,
+        "accent_bar": True,
+        "bullet": "• ",
+        "indent": "  ",
+    },
+    # New: Mint
+    "mint": {
+        "label": "薄荷 · 清爽",
+        "card_bg": "#ecfdf5",
+        "panel_bg": "#ffffff",
+        "title": "#064e3b",
+        "text": "#065f46",
+        "muted": "#0f766e",
+        "accent": "#10b981",
+        "border": "#a7f3d0",
+        "radius": 28,
+        "outer": 26,
+        "inner": 34,
+        "line_spacing": 14,
+        "title_size": 38,
+        "subtitle_size": 22,
+        "text_size": 28,
+        "footer_size": 22,
+        "accent_bar": True,
+        "bullet": "• ",
+        "indent": "  ",
+    },
+    # New: Amber paper
+    "paper": {
+        "label": "纸质 · 暖黄",
+        "card_bg": "#fffbeb",
+        "panel_bg": "#fffdf7",
+        "title": "#3f2d1c",
+        "text": "#4b3a2a",
+        "muted": "#8a6a4a",
+        "accent": "#f59e0b",
+        "border": "#fde68a",
+        "radius": 24,
+        "outer": 24,
+        "inner": 32,
+        "line_spacing": 14,
+        "title_size": 38,
+        "subtitle_size": 22,
+        "text_size": 28,
+        "footer_size": 22,
+        "accent_bar": False,
+        "bullet": "• ",
+        "indent": "  ",
+    },
+    # New: Black + Gold
+    "blackgold": {
+        "label": "黑金 · 高级",
+        "card_bg": "#070a12",
+        "panel_bg": "#0b1224",
+        "title": "#f8fafc",
+        "text": "#e2e8f0",
+        "muted": "#cbd5e1",
+        "accent": "#fbbf24",
+        "border": "#1f2a44",
+        "radius": 30,
+        "outer": 28,
+        "inner": 36,
+        "line_spacing": 16,
+        "title_size": 38,
+        "subtitle_size": 22,
+        "text_size": 28,
+        "footer_size": 22,
+        "accent_bar": True,
+        "bullet": "• ",
+        "indent": "  ",
+    },
 }
+
+
+def list_card_styles() -> list[dict]:
+    result: list[dict] = []
+    for key, theme in CARD_STYLES.items():
+        result.append({"key": key, "label": str(theme.get("label") or key)})
+    return result
 
 
 def get_card_style(style: str | None) -> dict:
