@@ -55,6 +55,14 @@ class AutoRecallUpdateRequest(BaseModel):
     seconds: int = 0
 
 
+class SendMessageRequest(BaseModel):
+    # kind: group | private
+    kind: str
+    target_id: int
+    text: str = ""
+    image_url: str = ""
+
+
 def _require_panel_enabled() -> None:
     if not settings.panel_password:
         raise HTTPException(status_code=503, detail="panel password is not configured")
@@ -91,6 +99,31 @@ async def _onebot_post(action: str, payload: dict[str, Any] | None = None) -> di
         resp = await client.post(f"{base}/{action}", json=payload or {})
         resp.raise_for_status()
         return resp.json()
+
+
+async def _send_via_onebot(kind: str, target_id: int, text: str = "", image_url: str = "") -> dict[str, Any]:
+    kind = (kind or "").strip().lower()
+    if kind not in {"group", "private"}:
+        raise HTTPException(status_code=400, detail="kind must be group|private")
+    if not target_id:
+        raise HTTPException(status_code=400, detail="target_id required")
+
+    # Build OneBot v11 message segments
+    message: list[dict[str, Any]] = []
+    if text:
+        message.append({"type": "text", "data": {"text": str(text)}})
+    if image_url:
+        message.append({"type": "image", "data": {"file": str(image_url)}})
+    if not message:
+        raise HTTPException(status_code=400, detail="empty message")
+
+    action = "send_group_msg" if kind == "group" else "send_private_msg"
+    payload: dict[str, Any] = {"message": message}
+    if kind == "group":
+        payload["group_id"] = int(target_id)
+    else:
+        payload["user_id"] = int(target_id)
+    return await _onebot_post(action, payload)
 
 
 async def _napcat_login_credential() -> str:
@@ -197,6 +230,13 @@ def _get_group_card_mode(group_id: int) -> dict[str, Any]:
 
 
 def _export_qrcode() -> dict[str, Any]:
+    """Export the current NapCat QRCode PNG from the container.
+
+    Notes:
+    - This is used by the panel for login/re-login.
+    - We prefer exporting on-demand (and even before each image request) because
+      QR codes expire quickly; a cached file is often already stale when the user opens it.
+    """
     PANEL_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["docker", "cp", f"{NAPCAT_CONTAINER_NAME}:{NAPCAT_CONTAINER_QRCODE_PATH}", str(PANEL_QRCODE_PATH)],
@@ -210,6 +250,25 @@ def _export_qrcode() -> dict[str, Any]:
         "size": stat.st_size,
         "url": "/panel/qrcode.png",
     }
+
+
+def _get_napcat_webui_token() -> str:
+    if not NAPCAT_WEBUI_CONFIG.exists():
+        return ""
+    try:
+        data = json.loads(NAPCAT_WEBUI_CONFIG.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    return str(data.get("token") or "").strip()
+
+
+def _napcat_webui_url_for_request(request: Request) -> str:
+    token = _get_napcat_webui_token()
+    if not token:
+        return ""
+    scheme = request.url.scheme or "http"
+    host = request.url.hostname or "127.0.0.1"
+    return f"{scheme}://{host}:6099/webui?token={token}"
 
 
 def _tail_log(lines: int = 200) -> dict[str, Any]:
@@ -319,6 +378,24 @@ async function login(){
         <div style="margin-top:12px;"><img id="qrcodeImg" alt="qrcode" /></div>
       </div>
       <div class="card" style="grid-column: 1 / -1;">
+        <h2>发送消息（OneBot）</h2>
+        <p class="muted">用于排障：从面板直接发群/私聊消息，验证 OneBot 能否发送图片/文本。</p>
+        <div class="row">
+          <select id="sendKind">
+            <option value="group">群</option>
+            <option value="private">私聊</option>
+          </select>
+          <input id="sendTarget" placeholder="群号/QQ号" />
+          <input id="sendText" placeholder="文本（可选）" style="flex:1; min-width:260px;" />
+        </div>
+        <div class="row">
+          <input id="sendImageUrl" placeholder="图片URL（可选，例如 http://host.docker.internal:9000/... 或 https://...）" style="flex:1; min-width:260px;" />
+          <button onclick="sendMsg()">发送</button>
+        </div>
+        <pre id="sendResult" class="muted">未发送</pre>
+      </div>
+
+      <div class="card" style="grid-column: 1 / -1;">
         <h2>运行日志</h2>
         <div class="row">
           <input id="logLines" value="200" placeholder="行数" />
@@ -345,13 +422,16 @@ async function login(){
     }
     async function loadStatus() {
       const data = await jget('/panel/api/status');
+      const webuiUrl = data.napcat_webui_url || '';
       document.getElementById('overview').innerHTML = `
         <div>框架健康：<b class="${data.framework_health?.ok ? 'ok' : 'bad'}">${data.framework_health?.ok ? '正常' : '异常'}</b></div>
         <div>OneBot 在线：<b class="${data.onebot_status?.online ? 'ok' : 'bad'}">${data.onebot_status?.online ? '在线' : '离线'}</b></div>
         <div>NapCat 在线：<b class="${data.napcat_login_info?.online ? 'ok' : 'bad'}">${data.napcat_login_info?.online ? '在线' : '离线'}</b></div>
         <div>机器人 QQ：<b>${data.napcat_login_info?.uin || '-'}</b></div>
         <div>昵称：<b>${data.napcat_login_info?.nick || '-'}</b></div>
-        <div>当前全局卡片模式：<b>${data.card_mode?.label || '-'}</b></div>`;
+        <div>当前全局卡片模式：<b>${data.card_mode?.label || '-'}</b></div>
+        ${webuiUrl ? `<div>NapCat WebUI：<a style="color:#60a5fa" href="${webuiUrl}" target="_blank" rel="noopener">打开实时二维码</a></div>` : ''}
+      `;
       document.getElementById('cardMode').innerText = `当前：${data.card_mode?.mode || '-'} / ${data.card_mode?.label || '-'}`;
       document.getElementById('cardModeSelect').value = data.card_mode?.mode || 'text';
       document.getElementById('raw').innerText = JSON.stringify(data, null, 2);
@@ -400,6 +480,15 @@ async function login(){
       document.getElementById('qrcodeMeta').innerText = JSON.stringify(data, null, 2);
       if (data.url) document.getElementById('qrcodeImg').src = data.url + '?t=' + Date.now();
     }
+    async function sendMsg() {
+      const kind = document.getElementById('sendKind').value;
+      const target = document.getElementById('sendTarget').value.trim();
+      const text = document.getElementById('sendText').value;
+      const image_url = document.getElementById('sendImageUrl').value.trim();
+      if (!target) return;
+      const data = await jpost('/panel/api/send', {kind, target_id: Number(target), text, image_url});
+      document.getElementById('sendResult').innerText = JSON.stringify(data, null, 2);
+    }
     async function loadLogs() {
       const lines = Number(document.getElementById('logLines').value || '200');
       const data = await jget('/panel/api/logs?lines=' + encodeURIComponent(lines));
@@ -439,10 +528,12 @@ async def panel_status(request: Request) -> dict[str, Any]:
         napcat_login_info = (napcat_resp or {}).get("data") or napcat_resp
     except Exception as exc:
         napcat_login_info = {"ok": False, "error": str(exc), "online": False}
+
     return {
         "framework_health": framework_health,
         "onebot_status": onebot_status,
         "napcat_login_info": napcat_login_info,
+        "napcat_webui_url": _napcat_webui_url_for_request(request),
         "card_mode": {"mode": get_card_mode(), "label": get_card_mode_label()},
     }
 
@@ -500,9 +591,31 @@ async def panel_export_qrcode(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.post("/api/send")
+async def panel_send_message(request: Request, body: SendMessageRequest) -> dict[str, Any]:
+    """Send a message via OneBot v11.
+
+    This endpoint is intended for debugging / operations from the web panel.
+    """
+    _auth_guard(request)
+    try:
+        resp = await _send_via_onebot(
+            kind=body.kind,
+            target_id=int(body.target_id),
+            text=body.text or "",
+            image_url=body.image_url or "",
+        )
+        return {"ok": True, "response": resp}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/qrcode.png")
 async def panel_qrcode_image(request: Request) -> FileResponse:
     _auth_guard(request)
-    if not PANEL_QRCODE_PATH.exists():
-        _export_qrcode()
+    # Always export the latest qrcode before serving.
+    # QR code validity is short; serving a cached file causes "arrive expired".
+    _export_qrcode()
     return FileResponse(PANEL_QRCODE_PATH)
