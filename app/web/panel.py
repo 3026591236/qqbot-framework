@@ -436,8 +436,24 @@ async function login(){
   <title>QQ Bot 控制面板</title>
   <style>
     body { font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin: 0; background: #0b1020; color: #e5e7eb; }
-    .wrap { max-width: 1180px; margin: 0 auto; padding: 24px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .layout { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+    .sidebar { background: #0d1426; border-right: 1px solid #24304a; padding: 18px 14px; position: sticky; top: 0; height: 100vh; box-sizing: border-box; }
+    .brand { padding: 10px 10px 16px; border-bottom: 1px solid #24304a; margin-bottom: 12px; }
+    .brand .title { font-size: 18px; font-weight: 700; }
+    .brand .sub { font-size: 12px; margin-top: 2px; }
+    .menu a { display: block; padding: 10px 12px; border-radius: 12px; color: #e5e7eb; text-decoration: none; margin: 6px 0; border: 1px solid transparent; }
+    .menu a:hover { background: #121a2b; border-color: #24304a; }
+    .menu a.active { background: #1a2a52; border-color: #2b3a64; }
+    .foot { padding: 10px 12px; font-size: 12px; border-top: 1px solid #24304a; margin-top: 14px; }
+    .content { padding: 22px; }
+    .topbar { max-width: 1200px; margin: 0 auto 16px; }
+    .grid { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+    .section { display: none; }
+    .section.active { display: block; }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { position: relative; height: auto; }
+    }
     .card { background: #121a2b; border: 1px solid #24304a; border-radius: 16px; padding: 18px; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
     h1,h2,h3 { margin-top: 0; }
     .muted { color: #94a3b8; }
@@ -453,119 +469,166 @@ async function login(){
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>QQ Bot 控制面板</h1>
-    <p class="muted">当前已支持：登录认证、总览、二维码查看、全局/按群卡片模式、自动撤回、日志查看。</p>
-    <div class="grid">
-      <div class="card">
-        <h2>总览</h2>
-        <div id="overview" class="kv muted">加载中...</div>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="title">QQ Bot</div>
+        <div class="sub muted">控制面板</div>
       </div>
-      <div class="card">
-        <h2>全局卡片模式</h2>
-        <div id="cardMode" class="muted">加载中...</div>
-        <div class="row">
-          <select id="cardModeSelect"><option value="text">文字</option><option value="image">图片</option></select>
-          <button onclick="setCardMode()">保存</button>
-        </div>
-      </div>
-      <div class="card">
-        <h2>按群卡片模式</h2>
-        <div id="groupCardMode" class="muted">输入群号后查看</div>
-        <div class="row">
-          <input id="groupCardModeGroupId" placeholder="群号" />
-          <select id="groupCardModeSelect"><option value="text">文字</option><option value="image">图片</option></select>
-        </div>
-        <div class="row">
-          <button onclick="loadGroupCardMode()" class="secondary">查询</button>
-          <button onclick="setGroupCardMode()">保存</button>
-        </div>
-      </div>
-      <div class="card">
-        <h2>群自动撤回</h2>
-        <div id="autoRecall" class="muted">输入群号后查看</div>
-        <div class="row">
-          <input id="groupId" placeholder="群号" />
-          <input id="recallSeconds" placeholder="秒数" value="10" />
-        </div>
-        <div class="row">
-          <button onclick="loadAutoRecall()" class="secondary">查询</button>
-          <button onclick="enableAutoRecall()">开启/更新</button>
-          <button onclick="disableAutoRecall()" class="secondary">关闭</button>
-        </div>
-      </div>
-      <div class="card">
-        <h2>登录二维码</h2>
-        <div class="row"><button onclick="refreshQrcode()">刷新二维码文件</button></div>
-        <div id="qrcodeMeta" class="muted" style="margin-top:10px;">未加载</div>
-        <div style="margin-top:12px;"><img id="qrcodeImg" alt="qrcode" /></div>
-      </div>
-      <div class="card" style="grid-column: 1 / -1;">
-        <h2>发送消息（OneBot）</h2>
-        <p class="muted">用于排障：从面板直接发群/私聊消息，验证 OneBot 能否发送图片/文本。</p>
-        <div class="row">
-          <select id="sendKind">
-            <option value="group">群</option>
-            <option value="private">私聊</option>
-          </select>
-          <input id="sendTarget" placeholder="群号/QQ号" />
-          <input id="sendText" placeholder="文本（可选）" style="flex:1; min-width:260px;" />
-        </div>
-        <div class="row">
-          <input id="sendImageUrl" placeholder="图片URL（可选，例如 http://host.docker.internal:9000/... 或 https://...）" style="flex:1; min-width:260px;" />
-          <button onclick="sendMsg()">发送</button>
-        </div>
-        <pre id="sendResult" class="muted">未发送</pre>
+      <nav class="menu">
+        <a href="#dashboard" id="m-dashboard">总览</a>
+        <a href="#login" id="m-login">登录/二维码</a>
+        <a href="#ops" id="m-ops">运维/排障</a>
+        <a href="#plugins" id="m-plugins">插件管理</a>
+        <a href="#backup" id="m-backup">备份</a>
+        <a href="#raw" id="m-raw">原始状态</a>
+      </nav>
+      <div class="foot muted" id="sideStatus">加载中...</div>
+    </aside>
+
+    <main class="content">
+      <div class="topbar">
+        <h1>QQ Bot 控制面板</h1>
+        <p class="muted">左侧菜单切换功能区；登录二维码建议使用 NapCat WebUI 实时二维码。</p>
       </div>
 
-      <div class="card" style="grid-column: 1 / -1;">
-        <h2>运行日志</h2>
-        <div class="row">
-          <input id="logLines" value="200" placeholder="行数" />
-          <button onclick="loadLogs()" class="secondary">刷新日志</button>
+      <section class="section" id="sec-dashboard">
+        <div class="grid">
+          <div class="card">
+            <h2>总览</h2>
+            <div id="overview" class="kv muted">加载中...</div>
+          </div>
+          <div class="card">
+            <h2>全局卡片模式</h2>
+            <div id="cardMode" class="muted">加载中...</div>
+            <div class="row">
+              <select id="cardModeSelect"><option value="text">文字</option><option value="image">图片</option></select>
+              <button onclick="setCardMode()">保存</button>
+            </div>
+          </div>
+          <div class="card">
+            <h2>按群卡片模式</h2>
+            <div id="groupCardMode" class="muted">输入群号后查看</div>
+            <div class="row">
+              <input id="groupCardModeGroupId" placeholder="群号" />
+              <select id="groupCardModeSelect"><option value="text">文字</option><option value="image">图片</option></select>
+            </div>
+            <div class="row">
+              <button onclick="loadGroupCardMode()" class="secondary">查询</button>
+              <button onclick="setGroupCardMode()">保存</button>
+            </div>
+          </div>
+          <div class="card">
+            <h2>群自动撤回</h2>
+            <div id="autoRecall" class="muted">输入群号后查看</div>
+            <div class="row">
+              <input id="groupId" placeholder="群号" />
+              <input id="recallSeconds" placeholder="秒数" value="10" />
+            </div>
+            <div class="row">
+              <button onclick="loadAutoRecall()" class="secondary">查询</button>
+              <button onclick="enableAutoRecall()">开启/更新</button>
+              <button onclick="disableAutoRecall()" class="secondary">关闭</button>
+            </div>
+          </div>
         </div>
-        <pre id="logs">加载中...</pre>
-      </div>
-      <div class="card" style="grid-column: 1 / -1;">
-        <h2>插件管理</h2>
-        <p class="muted">列出插件注册信息（启用/禁用）。禁用后需要重启框架进程才会生效（因为插件在启动时加载）。</p>
-        <div class="row">
-          <button class="secondary" onclick="loadPlugins()">刷新插件列表</button>
-        </div>
-        <pre id="plugins">加载中...</pre>
-        <div class="row">
-          <input id="pluginName" placeholder="插件名（name）" />
-          <select id="pluginEnabled"><option value="true">启用</option><option value="false">禁用</option></select>
-          <button onclick="togglePlugin()">保存</button>
-        </div>
-        <pre id="pluginResult" class="muted">未操作</pre>
-      </div>
+      </section>
 
-      <div class="card" style="grid-column: 1 / -1;">
-        <h2>一键自检 / 保活信息</h2>
-        <p class="muted">汇总 OneBot/NapCat 状态、关键端口、最近掉线原因（日志关键词）。</p>
-        <div class="row">
-          <input id="selfcheckLines" value="120" placeholder="日志行数" />
-          <button onclick="runSelfcheck()">运行自检</button>
+      <section class="section" id="sec-login">
+        <div class="grid">
+          <div class="card" style="grid-column: 1 / -1;">
+            <h2>登录二维码</h2>
+            <p class="muted">提示：二维码过期很快，优先点总览里的「NapCat WebUI：打开实时二维码」。</p>
+            <div class="row"><button onclick="refreshQrcode()">刷新二维码文件</button></div>
+            <div id="qrcodeMeta" class="muted" style="margin-top:10px;">未加载</div>
+            <div style="margin-top:12px;"><img id="qrcodeImg" alt="qrcode" /></div>
+          </div>
         </div>
-        <pre id="selfcheck" class="muted">未运行</pre>
-      </div>
+      </section>
 
-      <div class="card" style="grid-column: 1 / -1;">
-        <h2>备份下载</h2>
-        <p class="muted">生成一个 zip 备份（可能包含敏感信息：.env / napcat config / sqlite）。仅在你信任的环境下载保存。</p>
-        <div class="row">
-          <select id="backupIncludeSqlite"><option value="true">包含数据库 sqlite</option><option value="false">不包含数据库</option></select>
-          <button onclick="createBackup()">生成备份</button>
+      <section class="section" id="sec-ops">
+        <div class="grid">
+          <div class="card" style="grid-column: 1 / -1;">
+            <h2>发送消息（OneBot）</h2>
+            <p class="muted">用于排障：从面板直接发群/私聊消息，验证 OneBot 能否发送图片/文本。</p>
+            <div class="row">
+              <select id="sendKind">
+                <option value="group">群</option>
+                <option value="private">私聊</option>
+              </select>
+              <input id="sendTarget" placeholder="群号/QQ号" />
+              <input id="sendText" placeholder="文本（可选）" style="flex:1; min-width:260px;" />
+            </div>
+            <div class="row">
+              <input id="sendImageUrl" placeholder="图片URL（可选，例如 http://host.docker.internal:9000/... 或 https://...）" style="flex:1; min-width:260px;" />
+              <button onclick="sendMsg()">发送</button>
+            </div>
+            <pre id="sendResult" class="muted">未发送</pre>
+          </div>
+
+          <div class="card" style="grid-column: 1 / -1;">
+            <h2>一键自检 / 保活信息</h2>
+            <p class="muted">汇总 OneBot/NapCat 状态、关键端口、最近掉线原因（日志关键词）。</p>
+            <div class="row">
+              <input id="selfcheckLines" value="120" placeholder="日志行数" />
+              <button onclick="runSelfcheck()">运行自检</button>
+            </div>
+            <pre id="selfcheck" class="muted">未运行</pre>
+          </div>
+
+          <div class="card" style="grid-column: 1 / -1;">
+            <h2>运行日志</h2>
+            <div class="row">
+              <input id="logLines" value="200" placeholder="行数" />
+              <button onclick="loadLogs()" class="secondary">刷新日志</button>
+            </div>
+            <pre id="logs">加载中...</pre>
+          </div>
         </div>
-        <pre id="backup" class="muted">未生成</pre>
-      </div>
+      </section>
 
-      <div class="card" style="grid-column: 1 / -1;">
-        <h2>原始状态</h2>
-        <pre id="raw">加载中...</pre>
-      </div>
-    </div>
+      <section class="section" id="sec-plugins">
+        <div class="grid">
+          <div class="card" style="grid-column: 1 / -1;">
+            <h2>插件管理</h2>
+            <p class="muted">列出插件注册信息（启用/禁用）。禁用后需要重启框架进程才会生效（因为插件在启动时加载）。</p>
+            <div class="row">
+              <button class="secondary" onclick="loadPlugins()">刷新插件列表</button>
+            </div>
+            <pre id="plugins">加载中...</pre>
+            <div class="row">
+              <input id="pluginName" placeholder="插件名（name）" />
+              <select id="pluginEnabled"><option value="true">启用</option><option value="false">禁用</option></select>
+              <button onclick="togglePlugin()">保存</button>
+            </div>
+            <pre id="pluginResult" class="muted">未操作</pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="sec-backup">
+        <div class="grid">
+          <div class="card" style="grid-column: 1 / -1;">
+            <h2>备份下载</h2>
+            <p class="muted">生成一个 zip 备份（可能包含敏感信息：.env / napcat config / sqlite）。仅在你信任的环境下载保存。</p>
+            <div class="row">
+              <select id="backupIncludeSqlite"><option value="true">包含数据库 sqlite</option><option value="false">不包含数据库</option></select>
+              <button onclick="createBackup()">生成备份</button>
+            </div>
+            <pre id="backup" class="muted">未生成</pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="sec-raw">
+        <div class="grid">
+          <div class="card" style="grid-column: 1 / -1;">
+            <h2>原始状态</h2>
+            <pre id="raw">加载中...</pre>
+          </div>
+        </div>
+      </section>
+    </main>
   </div>
   <script>
     async function jget(url) {
@@ -581,10 +644,12 @@ async function login(){
     async function loadStatus() {
       const data = await jget('/panel/api/status');
       const webuiUrl = data.napcat_webui_url || '';
+      const onebotOnline = !!data.onebot_status?.online;
+      const napcatOnline = !!data.napcat_login_info?.online;
       document.getElementById('overview').innerHTML = `
         <div>框架健康：<b class="${data.framework_health?.ok ? 'ok' : 'bad'}">${data.framework_health?.ok ? '正常' : '异常'}</b></div>
-        <div>OneBot 在线：<b class="${data.onebot_status?.online ? 'ok' : 'bad'}">${data.onebot_status?.online ? '在线' : '离线'}</b></div>
-        <div>NapCat 在线：<b class="${data.napcat_login_info?.online ? 'ok' : 'bad'}">${data.napcat_login_info?.online ? '在线' : '离线'}</b></div>
+        <div>OneBot 在线：<b class="${onebotOnline ? 'ok' : 'bad'}">${onebotOnline ? '在线' : '离线'}</b></div>
+        <div>NapCat 在线：<b class="${napcatOnline ? 'ok' : 'bad'}">${napcatOnline ? '在线' : '离线'}</b></div>
         <div>机器人 QQ：<b>${data.napcat_login_info?.uin || '-'}</b></div>
         <div>昵称：<b>${data.napcat_login_info?.nick || '-'}</b></div>
         <div>当前全局卡片模式：<b>${data.card_mode?.label || '-'}</b></div>
@@ -593,6 +658,7 @@ async function login(){
       document.getElementById('cardMode').innerText = `当前：${data.card_mode?.mode || '-'} / ${data.card_mode?.label || '-'}`;
       document.getElementById('cardModeSelect').value = data.card_mode?.mode || 'text';
       document.getElementById('raw').innerText = JSON.stringify(data, null, 2);
+      document.getElementById('sideStatus').innerText = `OneBot: ${onebotOnline ? '在线' : '离线'} | NapCat: ${napcatOnline ? '在线' : '离线'}`;
     }
     async function setCardMode() {
       const mode = document.getElementById('cardModeSelect').value;
@@ -678,6 +744,26 @@ async function login(){
       const data = await jget('/panel/api/logs?lines=' + encodeURIComponent(lines));
       document.getElementById('logs').innerText = data.content || '(空)';
     }
+    function setActiveMenu(id) {
+      for (const a of document.querySelectorAll('.menu a')) a.classList.remove('active');
+      const el = document.getElementById(id);
+      if (el) el.classList.add('active');
+    }
+    function showSection(name) {
+      for (const s of document.querySelectorAll('.section')) s.classList.remove('active');
+      const target = document.getElementById('sec-' + name);
+      if (target) target.classList.add('active');
+      setActiveMenu('m-' + name);
+    }
+    function route() {
+      const h = (location.hash || '').replace('#','');
+      const key = h || 'dashboard';
+      const allowed = new Set(['dashboard','login','ops','plugins','backup','raw']);
+      showSection(allowed.has(key) ? key : 'dashboard');
+    }
+    window.addEventListener('hashchange', route);
+
+    route();
     loadStatus(); refreshQrcode(); loadLogs(); loadPlugins();
   </script>
 </body></html>
