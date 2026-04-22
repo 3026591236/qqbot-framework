@@ -13,10 +13,23 @@ logger = logging.getLogger(__name__)
 
 
 def _module_plugins(module: ModuleType) -> list[object]:
-    result = []
+    result: list[object] = []
+
+    # Single plugin entrypoint
     direct = getattr(module, "plugin", None)
     if direct is not None and not inspect.isclass(direct):
         result.append(direct)
+
+    # Multiple plugin entrypoint
+    multi = getattr(module, "plugins", None)
+    if isinstance(multi, (list, tuple)):
+        for p in multi:
+            if p is None or inspect.isclass(p):
+                continue
+            if hasattr(p, "dispatch") and hasattr(p, "name") and p not in result:
+                result.append(p)
+
+    # Fallback: scan globals
     for value in module.__dict__.values():
         if value is None:
             continue

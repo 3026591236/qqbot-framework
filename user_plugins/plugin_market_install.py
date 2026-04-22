@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import os
+import json
 from pathlib import Path
 
 import httpx
@@ -9,6 +9,32 @@ import httpx
 from app.auth import is_owner
 from app.core.plugin import CommandPlugin, PluginMeta
 from app.plugin_market import get_market_plugin, list_market_plugins
+
+
+def _data_dir() -> Path:
+    # user_plugins/ is a safe, always-present anchor.
+    base = Path(__file__).resolve().parent.parent / "data"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _installed_path() -> Path:
+    return _data_dir() / "market_installed.json"
+
+
+def _load_installed() -> dict:
+    path = _installed_path()
+    if not path.exists():
+        return {"installed": {}}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"installed": {}}
+
+
+def _save_installed(data: dict) -> None:
+    path = _installed_path()
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _plugins_dir() -> Path:
@@ -82,9 +108,21 @@ async def on_install(ctx):
     target = _plugins_dir() / filename
     target.write_bytes(data)
 
+    # record installed info
+    installed = _load_installed()
+    installed.setdefault("installed", {})[item.name] = {
+        "name": item.name,
+        "file": target.name,
+        "url": item.url,
+        "version": item.version,
+        "author": item.author,
+        "sha256": got,
+    }
+    _save_installed(installed)
+
     await ctx.reply(
         "安装完成（已写入 user_plugins/）\n"
-        f"插件：{item.name}\n"
+        f"插件：{item.name} v{item.version}\n"
         f"文件：{target.name}\n"
         "提示：当前框架不支持热加载插件，需要重启服务后生效。"
     )
