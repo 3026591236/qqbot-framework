@@ -76,8 +76,9 @@ if [ -f "$BASE_DIR/.venv/bin/pip" ]; then
   "$BASE_DIR/.venv/bin/pip" install -r "$BASE_DIR/requirements.txt" >/dev/null 2>&1 || true
 fi
 
-if command -v systemctl >/dev/null 2>&1 && systemctl status qqbot-framework >/dev/null 2>&1; then
-  systemctl restart qqbot-framework
+SERVICE_NAME="${QQBOT_SYSTEMD_SERVICE:-qqbot-framework}"
+if [ -n "$SERVICE_NAME" ] && command -v systemctl >/dev/null 2>&1 && systemctl status "$SERVICE_NAME" >/dev/null 2>&1; then
+  systemctl restart "$SERVICE_NAME"
   exit 0
 fi
 
