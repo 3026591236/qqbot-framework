@@ -17,8 +17,30 @@ class OneBotAPI:
             resp.raise_for_status()
             return resp.json()
 
-    async def send_private_msg(self, user_id: int, message: str | list[dict]) -> dict:
-        return await self._post("send_private_msg", {"user_id": user_id, "message": message})
+    async def send_private_msg(self, user_id: int, message: str | list[dict], group_id: int | None = None) -> dict:
+        payload: dict = {"user_id": user_id, "message": message}
+        if group_id is not None:
+            payload["group_id"] = int(group_id)
+        return await self._post("send_private_msg", payload)
+
+    async def send_temp_msg(self, group_id: int, user_id: int, message: str | list[dict]) -> dict:
+        """Best-effort temporary session message.
+
+        NapCat/OneBot implementations commonly support temp-chat by calling send_private_msg
+        with an extra group_id. Some variants expose a dedicated send_temp_msg.
+        """
+        # 1) preferred: send_private_msg with group_id
+        resp = await self.send_private_msg(int(user_id), message, group_id=int(group_id))
+        try:
+            if isinstance(resp, dict) and resp.get("retcode") not in (None, 0, "0"):
+                raise RuntimeError(str(resp))
+            return resp
+        except Exception:
+            # 2) fallback: dedicated API if available
+            return await self._post(
+                "send_temp_msg",
+                {"group_id": int(group_id), "user_id": int(user_id), "message": message},
+            )
 
     async def send_group_msg(self, group_id: int, message: str | list[dict]) -> dict:
         return await self._post("send_group_msg", {"group_id": group_id, "message": message})

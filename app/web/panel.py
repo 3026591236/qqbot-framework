@@ -70,6 +70,8 @@ class SendMessageRequest(BaseModel):
     target_id: int
     text: str = ""
     image_url: str = ""
+    # for kind=private: optional group_id to send as temporary-session message
+    from_group_id: int = 0
 
 
 class PanelPluginToggleRequest(BaseModel):
@@ -259,7 +261,13 @@ async def _onebot_post(action: str, payload: dict[str, Any] | None = None) -> di
         return resp.json()
 
 
-async def _send_via_onebot(kind: str, target_id: int, text: str = "", image_url: str = "") -> dict[str, Any]:
+async def _send_via_onebot(
+    kind: str,
+    target_id: int,
+    text: str = "",
+    image_url: str = "",
+    from_group_id: int = 0,
+) -> dict[str, Any]:
     kind = (kind or "").strip().lower()
     if kind not in {"group", "private"}:
         raise HTTPException(status_code=400, detail="kind must be group|private")
@@ -281,6 +289,9 @@ async def _send_via_onebot(kind: str, target_id: int, text: str = "", image_url:
         payload["group_id"] = int(target_id)
     else:
         payload["user_id"] = int(target_id)
+        # NapCat temp-session is commonly supported by providing extra group_id
+        if int(from_group_id or 0) > 0:
+            payload["group_id"] = int(from_group_id)
     return await _onebot_post(action, payload)
 
 
@@ -609,12 +620,15 @@ async function login(){
             <h2>发送消息（OneBot）</h2>
             <p class="muted">用于排障：从面板直接发群/私聊消息，验证 OneBot 能否发送图片/文本。</p>
             <div class="row">
-              <select id="sendKind">
+              <select id="sendKind" onchange="document.getElementById('sendFromGroupWrap').style.display = (this.value==='private'?'flex':'none');">
                 <option value="group">群</option>
                 <option value="private">私聊</option>
               </select>
               <input id="sendTarget" placeholder="群号/QQ号" />
               <input id="sendText" placeholder="文本（可选）" style="flex:1; min-width:260px;" />
+            </div>
+            <div class="row" id="sendFromGroupWrap" style="display:none;">
+              <input id="sendFromGroup" placeholder="临时会话群号（可选，用于调起临时消息）" style="flex:1; min-width:260px;" />
             </div>
             <div class="row">
               <input id="sendImageUrl" placeholder="图片URL（可选，例如 http://host.docker.internal:9000/... 或 https://...）" style="flex:1; min-width:260px;" />
@@ -800,8 +814,9 @@ async function login(){
       const target = document.getElementById('sendTarget').value.trim();
       const text = document.getElementById('sendText').value;
       const image_url = document.getElementById('sendImageUrl').value.trim();
+      const from_group_id = Number((document.getElementById('sendFromGroup')?.value || '0').trim() || '0');
       if (!target) return;
-      const data = await jpost('/panel/api/send', {kind, target_id: Number(target), text, image_url});
+      const data = await jpost('/panel/api/send', {kind, target_id: Number(target), text, image_url, from_group_id});
       document.getElementById('sendResult').innerText = JSON.stringify(data, null, 2);
     }
     function badge(label, ok) {
@@ -1075,6 +1090,7 @@ async def panel_send_message(request: Request, body: SendMessageRequest) -> dict
             target_id=int(body.target_id),
             text=body.text or "",
             image_url=body.image_url or "",
+            from_group_id=int(body.from_group_id or 0),
         )
         return {"ok": True, "response": resp}
     except HTTPException:

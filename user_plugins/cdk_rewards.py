@@ -412,10 +412,18 @@ async def process_checkin_reward(ctx, result: dict) -> None:
         if cdk == "":
             notices.append("首日签到奖励卡池已空")
         elif cdk:
-            await ctx.api.send_private_msg(
-                user_id,
-                f"签到奖励已发放\n群号：{group_id}\n类型：首日签到\nCDK：{cdk}"
-            )
+            # Prefer temporary-session message (works even if not friends) when possible.
+            try:
+                await ctx.api.send_temp_msg(
+                    group_id,
+                    user_id,
+                    f"签到奖励已发放\n群号：{group_id}\n类型：首日签到\nCDK：{cdk}",
+                )
+            except Exception:
+                await ctx.api.send_private_msg(
+                    user_id,
+                    f"签到奖励已发放\n群号：{group_id}\n类型：首日签到\nCDK：{cdk}",
+                )
             notices.append("首日签到奖励已私发")
 
     streak = int(result.get("streak") or 0)
@@ -426,10 +434,17 @@ async def process_checkin_reward(ctx, result: dict) -> None:
         if cdk == "":
             notices.append(f"连签 {days} 天奖励卡池已空")
         elif cdk:
-            await ctx.api.send_private_msg(
-                user_id,
-                f"签到奖励已发放\n群号：{group_id}\n类型：连续签到 {days} 天\nCDK：{cdk}"
-            )
+            try:
+                await ctx.api.send_temp_msg(
+                    group_id,
+                    user_id,
+                    f"签到奖励已发放\n群号：{group_id}\n类型：连续签到 {days} 天\nCDK：{cdk}",
+                )
+            except Exception:
+                await ctx.api.send_private_msg(
+                    user_id,
+                    f"签到奖励已发放\n群号：{group_id}\n类型：连续签到 {days} 天\nCDK：{cdk}",
+                )
             notices.append(f"连签 {days} 天奖励已私发")
 
     if notices:
@@ -463,10 +478,17 @@ async def process_invite_reward(api, event: dict) -> bool:
             notices.append(f"邀请满 {need_count} 人奖励卡池已空")
         elif cdk:
             try:
-                await api.send_private_msg(
-                    int(inviter_user_id),
-                    f"邀请奖励已发放\n群号：{group_id}\n已邀请：{invite_count} 人\n达成条件：{need_count} 人\nCDK：{cdk}"
-                )
+                try:
+                    await api.send_temp_msg(
+                        int(group_id),
+                        int(inviter_user_id),
+                        f"邀请奖励已发放\n群号：{group_id}\n已邀请：{invite_count} 人\n达成条件：{need_count} 人\nCDK：{cdk}",
+                    )
+                except Exception:
+                    await api.send_private_msg(
+                        int(inviter_user_id),
+                        f"邀请奖励已发放\n群号：{group_id}\n已邀请：{invite_count} 人\n达成条件：{need_count} 人\nCDK：{cdk}",
+                    )
                 notices.append(f"邀请满 {need_count} 人奖励已私发给 {inviter_user_id}")
             except Exception:
                 notices.append(f"邀请满 {need_count} 人奖励发放失败，请检查私聊权限")
