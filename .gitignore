@@ -15,3 +15,4 @@ napcat/config/napcat*.json
 napcat/config/webui.json
 *.tar.gz
 *.zip
+deploy/napcat.env

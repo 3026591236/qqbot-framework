@@ -10,11 +10,20 @@ services:
       - NAPCAT_UID=0
       - NAPCAT_GID=0
       - ACCOUNT=3837772523
+      # 可选：回退密码/快速登录（避免二维码频繁过期）
+      # 注意：这是敏感信息，不要提交到 Git 仓库；建议只在服务器本机环境变量或私有 .env 文件中配置。
+      - NAPCAT_QUICK_PASSWORD=${NAPCAT_QUICK_PASSWORD:-}
+      # 备用：如果你不想存明文，可填密码 MD5（等价凭据，同样需要保护好）
+      - NAPCAT_QUICK_PASSWORD_MD5=${NAPCAT_QUICK_PASSWORD_MD5:-}
     ports:
       - "3000:3000"
       - "6099:6099"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # 可选：把回退密码放在 deploy/napcat.env（本机私密文件）里注入，避免写死在 compose 或聊天里
+    # 使用方式：cp deploy/napcat.env.example deploy/napcat.env 然后填入密码/MD5
+    env_file:
+      - ./napcat.env
     volumes:
       - ../napcat/config:/app/napcat/config
       - ../ntqq:/app/.config/QQ
