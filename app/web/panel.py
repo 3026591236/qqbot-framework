@@ -24,6 +24,7 @@ from app.card_mode import (
 )
 from app.config import settings
 from app.db import _ensure_column, get_conn
+from app.plugin_market import get_market_plugin, list_market_plugins
 from app.plugin_registry import list_plugins as list_plugin_registry
 from app.plugin_registry import set_enabled as set_plugin_enabled
 from user_plugins.group_admin import get_auto_recall_seconds
@@ -37,6 +38,8 @@ PANEL_QRCODE_PATH = PANEL_RUNTIME_DIR / "qrcode.png"
 PANEL_SESSION_FILE = PANEL_RUNTIME_DIR / "session_token.txt"
 PANEL_LOGIN_STATE_FILE = PANEL_RUNTIME_DIR / "login_state.json"
 PANEL_BACKUP_DIR = PANEL_RUNTIME_DIR / "backups"
+MARKET_INSTALLED_PATH = Path(settings.data_dir) / "market_installed.json"
+MARKET_PLUGIN_PREFIX = "market_"
 APP_LOG_PATH = Path("/tmp/qqbot-framework-web.log")
 NAPCAT_CONTAINER_NAME = "napcat"
 NAPCAT_CONTAINER_QRCODE_PATH = "/app/napcat/cache/qrcode.png"
@@ -81,6 +84,18 @@ class SelfcheckRequest(BaseModel):
 
 class BackupRequest(BaseModel):
     include_sqlite: bool = True
+
+
+class MarketInstallRequest(BaseModel):
+    name: str
+
+
+class MarketRemoveRequest(BaseModel):
+    name: str
+
+
+class RestartRequest(BaseModel):
+    confirm: bool = False
 
 
 def _require_panel_enabled() -> None:
@@ -190,6 +205,7 @@ def _backup_runtime(include_sqlite: bool = True) -> dict[str, Any]:
         Path(".env"),
         Path("data") / "plugins.json",
         Path("data") / "group_card_mode.json",
+        Path("data") / "market_installed.json",
         Path("data") / "qqbot.sqlite3",
         Path("napcat") / "config",
     ]:
@@ -214,6 +230,25 @@ def _backup_runtime(include_sqlite: bool = True) -> dict[str, Any]:
             add_path(p, arc)
 
     return {"ok": True, "path": str(out), "url": f"/panel/api/backup/download?file={out.name}"}
+
+
+def _load_market_installed() -> dict[str, Any]:
+    if not MARKET_INSTALLED_PATH.exists():
+        return {"installed": {}}
+    try:
+        return json.loads(MARKET_INSTALLED_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {"installed": {}}
+
+
+def _save_market_installed(data: dict[str, Any]) -> None:
+    MARKET_INSTALLED_PATH.parent.mkdir(parents=True, exist_ok=True)
+    MARKET_INSTALLED_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _safe_market_filename(name: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in name)
+    return f"{MARKET_PLUGIN_PREFIX}{safe}.py"
 
 
 async def _onebot_post(action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -480,6 +515,7 @@ async function login(){
         <a href="#login" id="m-login">登录/二维码</a>
         <a href="#ops" id="m-ops">运维/排障</a>
         <a href="#plugins" id="m-plugins">插件管理</a>
+        <a href="#market" id="m-market">插件商店</a>
         <a href="#backup" id="m-backup">备份</a>
         <a href="#raw" id="m-raw">原始状态</a>
       </nav>
@@ -603,6 +639,33 @@ async function login(){
               <button onclick="togglePlugin()">保存</button>
             </div>
             <pre id="pluginResult" class="muted">未操作</pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="sec-market">
+        <div class="grid">
+          <div class="card" style="grid-column: 1 / -1;">
+            <h2>插件商店</h2>
+            <p class="muted">从配置的 QQBOT_MARKET_URL 拉取 market.json。安装/卸载后需要重启框架进程才生效。</p>
+            <div class="row">
+              <button class="secondary" onclick="loadMarket()">刷新商店列表</button>
+            </div>
+            <pre id="marketList" class="muted">加载中...</pre>
+            <div class="row">
+              <input id="marketName" placeholder="插件名（name）" />
+              <button onclick="marketInstall()">安装</button>
+              <button class="secondary" onclick="marketRemove()">卸载</button>
+            </div>
+            <pre id="marketResult" class="muted">未操作</pre>
+          </div>
+          <div class="card" style="grid-column: 1 / -1;">
+            <h2>已安装（商店）</h2>
+            <div class="row">
+              <button class="secondary" onclick="loadMarketInstalled()">刷新已安装</button>
+              <button onclick="restartApp()">一键重启框架（生效安装/卸载）</button>
+            </div>
+            <pre id="marketInstalled" class="muted">加载中...</pre>
           </div>
         </div>
       </section>
@@ -769,13 +832,41 @@ async function login(){
     function route() {
       const h = (location.hash || '').replace('#','');
       const key = h || 'dashboard';
-      const allowed = new Set(['dashboard','login','ops','plugins','backup','raw']);
+      const allowed = new Set(['dashboard','login','ops','plugins','market','backup','raw']);
       showSection(allowed.has(key) ? key : 'dashboard');
     }
     window.addEventListener('hashchange', route);
 
     route();
-    loadStatus(); refreshQrcode(); loadLogs(); loadPlugins();
+    async function loadMarket() {
+      const data = await jget('/panel/api/market');
+      document.getElementById('marketList').innerText = JSON.stringify(data, null, 2);
+    }
+    async function loadMarketInstalled() {
+      const data = await jget('/panel/api/market/installed');
+      document.getElementById('marketInstalled').innerText = JSON.stringify(data, null, 2);
+    }
+    async function marketInstall() {
+      const name = document.getElementById('marketName').value.trim();
+      if (!name) return;
+      const data = await jpost('/panel/api/market/install', {name});
+      document.getElementById('marketResult').innerText = JSON.stringify(data, null, 2);
+      await loadMarketInstalled();
+    }
+    async function marketRemove() {
+      const name = document.getElementById('marketName').value.trim();
+      if (!name) return;
+      const data = await jpost('/panel/api/market/remove', {name});
+      document.getElementById('marketResult').innerText = JSON.stringify(data, null, 2);
+      await loadMarketInstalled();
+    }
+    async function restartApp() {
+      const data = await jpost('/panel/api/restart', {confirm: true});
+      document.getElementById('marketResult').innerText = JSON.stringify(data, null, 2);
+      setTimeout(()=>location.reload(), 1200);
+    }
+
+    loadStatus(); refreshQrcode(); loadLogs(); loadPlugins(); loadMarket(); loadMarketInstalled();
   </script>
 </body></html>
     """
@@ -975,6 +1066,118 @@ async def panel_download_backup(request: Request, file: str = Query(...)) -> Fil
     if not p.exists():
         raise HTTPException(status_code=404, detail="not found")
     return FileResponse(p, filename=name)
+
+
+@router.get("/api/market")
+async def panel_market_list(request: Request) -> dict[str, Any]:
+    _auth_guard(request)
+    items = list_market_plugins()
+    return {
+        "ok": True,
+        "count": len(items),
+        "plugins": [
+            {
+                "name": p.name,
+                "version": p.version,
+                "author": p.author,
+                "description": p.description,
+                "url": p.url,
+                "sha256": bool((p.sha256 or "").strip()),
+            }
+            for p in items
+        ],
+    }
+
+
+@router.get("/api/market/installed")
+async def panel_market_installed(request: Request) -> dict[str, Any]:
+    _auth_guard(request)
+    data = _load_market_installed().get("installed", {})
+    return {"ok": True, "installed": data}
+
+
+@router.post("/api/market/install")
+async def panel_market_install(request: Request, body: MarketInstallRequest) -> dict[str, Any]:
+    _auth_guard(request)
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+
+    item = get_market_plugin(name)
+    if not item:
+        raise HTTPException(status_code=404, detail="plugin not found in market")
+    if not (item.url or "").strip():
+        raise HTTPException(status_code=400, detail="market item url missing")
+
+    # download
+    with httpx.Client(timeout=20, follow_redirects=True) as client:
+        resp = client.get(item.url)
+        resp.raise_for_status()
+        content = resp.content
+
+    got = hashlib.sha256(content).hexdigest()
+    expected = (item.sha256 or "").strip()
+    if expected and expected != got:
+        raise HTTPException(status_code=400, detail="sha256 mismatch")
+
+    filename = _safe_market_filename(item.name)
+    target = (BASE_DIR / "user_plugins") / filename
+    target.write_bytes(content)
+
+    installed = _load_market_installed()
+    installed.setdefault("installed", {})[item.name] = {
+        "name": item.name,
+        "file": filename,
+        "url": item.url,
+        "version": item.version,
+        "author": item.author,
+        "sha256": got,
+    }
+    _save_market_installed(installed)
+
+    return {"ok": True, "name": item.name, "file": filename, "version": item.version, "restart_required": True}
+
+
+@router.post("/api/market/remove")
+async def panel_market_remove(request: Request, body: MarketRemoveRequest) -> dict[str, Any]:
+    _auth_guard(request)
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+
+    installed = _load_market_installed()
+    info = (installed.get("installed", {}) or {}).get(name)
+    if not info:
+        raise HTTPException(status_code=404, detail="not installed")
+
+    file = str(info.get("file") or "")
+    if file:
+        p = (BASE_DIR / "user_plugins") / file
+        if p.exists():
+            try:
+                p.rename(p.with_suffix(p.suffix + ".disabled"))
+            except Exception:
+                pass
+
+    (installed.get("installed", {}) or {}).pop(name, None)
+    _save_market_installed(installed)
+
+    return {"ok": True, "name": name, "restart_required": True}
+
+
+@router.post("/api/restart")
+async def panel_restart(request: Request, body: RestartRequest) -> dict[str, Any]:
+    _auth_guard(request)
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="confirm required")
+
+    # We run under uvicorn; easiest is to kill the current process.
+    # Supervisor/nohup will be restarted by ops script; in our setup we relaunch from shell.
+    # Here we just exit the process.
+    _mark_login_action("restart_requested")
+    import os
+
+    os._exit(0)
 
 
 @router.get("/qrcode.png")
