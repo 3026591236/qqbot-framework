@@ -1,0 +1,25 @@
+version: '3.8'
+services:
+  qqbot-framework:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: qqbot-framework
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - lagrange
+
+  lagrange:
+    image: ghcr.io/lagrangedev/lagrange.onebot:edge
+    container_name: lagrange-onebot
+    restart: unless-stopped
+    ports:
+      - "5700:5700"
+    volumes:
+      - ../lagrange/data:/app/data

@@ -1,0 +1,20 @@
+version: "3"
+services:
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: napcat
+    restart: always
+    network_mode: bridge
+    mac_address: 02:42:ac:11:00:02
+    environment:
+      - NAPCAT_UID=0
+      - NAPCAT_GID=0
+      - ACCOUNT=3837772523
+    ports:
+      - "3000:3000"
+      - "6099:6099"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ../napcat/config:/app/napcat/config
+      - ../ntqq:/app/.config/QQ

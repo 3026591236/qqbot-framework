@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+build-release/
+build-release-zip/
+build-all-in-one/
+logs/
+data/
+ntqq/
+napcat/cache/
+napcat/config/onebot11_*.json
+napcat/config/napcat*.json
+napcat/config/webui.json
+*.tar.gz
+*.zip

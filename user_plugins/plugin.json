@@ -1,0 +1,12 @@
+{
+  "plugins": [
+    {
+      "name": "example_hello",
+      "module": "example_hello",
+      "version": "1.0.0",
+      "author": "OpenClaw",
+      "description": "示例用户插件",
+      "dependencies": []
+    }
+  ]
+}

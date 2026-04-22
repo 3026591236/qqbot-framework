@@ -1,0 +1,11 @@
+{
+  "plugins": [
+    {
+      "name": "example-hello",
+      "version": "1.0.0",
+      "author": "OpenClaw",
+      "description": "示例在线插件",
+      "url": "https://raw.githubusercontent.com/example/qqbot-plugins/main/example_hello.py"
+    }
+  ]
+}

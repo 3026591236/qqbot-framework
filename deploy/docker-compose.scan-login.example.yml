@@ -1,0 +1,31 @@
+version: '3.8'
+services:
+  qqbot-framework:
+    build: .
+    container_name: qqbot-framework
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./data:/app/data
+
+  # 这里预留给支持 QQ 扫码登录的 OneBot 适配器
+  # 你需要替换 image、挂载目录、启动命令、端口映射
+  # 只要最终满足：
+  # 1) 对外提供 HTTP API，例如 http://onebot-adapter:5700
+  # 2) 把消息事件 POST 到 http://qqbot-framework:9000/onebot/event
+  onebot-adapter:
+    image: your-onebot-adapter-image:latest
+    container_name: onebot-adapter
+    restart: unless-stopped
+    volumes:
+      - ./adapter-data:/app/data
+    environment:
+      - ONEBOT_POST_URL=http://qqbot-framework:9000/onebot/event
+      - ONEBOT_HTTP_API=0.0.0.0:5700
+    ports:
+      - "5700:5700"
+    depends_on:
+      - qqbot-framework

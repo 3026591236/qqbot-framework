@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  qqbot-framework:
+    build: .
+    container_name: qqbot-framework
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./data:/app/data

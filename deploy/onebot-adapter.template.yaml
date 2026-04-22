@@ -1,0 +1,18 @@
+# 通用 OneBot 适配器配置模板（示意）
+# 不是某个具体项目的官方配置，请按你选用的适配器实际字段修改。
+
+http_api:
+  host: 0.0.0.0
+  port: 5700
+
+reverse_http:
+  enable: true
+  urls:
+    - http://127.0.0.1:9000/onebot/event
+
+login:
+  method: qrcode
+  persist_session: true
+
+storage:
+  session_dir: ./data/session

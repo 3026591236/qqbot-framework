@@ -1,0 +1,20 @@
+{
+  "Implementations": [
+    {
+      "Type": "ReverseWebSocket",
+      "Host": "0.0.0.0",
+      "Port": 5700
+    }
+  ],
+  "OneBot": {
+    "HttpPostUrls": [
+      "http://qqbot-framework:9000/onebot/event"
+    ]
+  },
+  "Account": {
+    "Uin": 0,
+    "Protocol": "Linux",
+    "AutoReconnect": true,
+    "UseQrCodeLogin": true
+  }
+}
