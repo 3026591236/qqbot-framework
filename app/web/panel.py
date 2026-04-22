@@ -494,13 +494,34 @@ async function login(){
     .muted { color: #94a3b8; }
     .ok { color: #34d399; }
     .bad { color: #f87171; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
     input, select, button { border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #e5e7eb; padding: 10px 12px; }
     button { cursor: pointer; background: #2563eb; border-color: #2563eb; }
     button.secondary { background: #1e293b; border-color: #334155; }
+    button.danger { background: #991b1b; border-color: #991b1b; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; border: 1px solid #24304a; background: #0f172a; }
+    .badge.ok { color: #34d399; border-color: rgba(52,211,153,.35); }
+    .badge.bad { color: #f87171; border-color: rgba(248,113,113,.35); }
+    .list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+    .item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border-radius: 14px; border: 1px solid #24304a; background: #0f172a; }
+    .item .meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .item .meta .name { font-weight: 700; }
+    .item .meta .desc { font-size: 12px; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 52vw; }
+    .item .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     pre { white-space: pre-wrap; word-break: break-word; background: #0f172a; padding: 12px; border-radius: 12px; max-height: 420px; overflow: auto; font-size: 12px; line-height: 1.45; }
     img { max-width: 100%; border-radius: 12px; background: #fff; }
     .kv { line-height: 1.8; }
+    details { border: 1px dashed #24304a; border-radius: 14px; padding: 10px 12px; margin-top: 10px; }
+    details > summary { cursor: pointer; color: #cbd5e1; }
+    @media (max-width: 520px) {
+      .content { padding: 14px; }
+      .grid { grid-template-columns: 1fr; }
+      .item { flex-direction: column; align-items: flex-start; }
+      .item .actions { width: 100%; justify-content: flex-start; }
+      .item .meta .desc { max-width: 78vw; }
+      button { width: 100%; }
+      input, select { width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -603,13 +624,18 @@ async function login(){
           </div>
 
           <div class="card" style="grid-column: 1 / -1;">
-            <h2>一键自检 / 保活信息</h2>
-            <p class="muted">汇总 OneBot/NapCat 状态、关键端口、最近掉线原因（日志关键词）。</p>
+            <h2>一键自检（更适合人看）</h2>
+            <p class="muted">把 OneBot/NapCat 的关键状态汇总成“结论 + 原因”。下面还有可展开的原始数据。</p>
             <div class="row">
               <input id="selfcheckLines" value="120" placeholder="日志行数" />
               <button onclick="runSelfcheck()">运行自检</button>
             </div>
-            <pre id="selfcheck" class="muted">未运行</pre>
+            <div class="row" id="selfcheckBadges" style="margin-top: 10px;"></div>
+            <div id="selfcheckSummary" class="muted" style="margin-top: 8px;">未运行</div>
+            <details>
+              <summary>查看原始自检数据（JSON）</summary>
+              <pre id="selfcheck" class="muted">未运行</pre>
+            </details>
           </div>
 
           <div class="card" style="grid-column: 1 / -1;">
@@ -626,19 +652,20 @@ async function login(){
       <section class="section" id="sec-plugins">
         <div class="grid">
           <div class="card" style="grid-column: 1 / -1;">
-            <h2>插件管理</h2>
-            <p class="muted">插件商店命令：插件市场 / 安装插件 xxx / 已装插件 / 更新插件 xxx / 卸载插件 xxx（卸载是安全停用：重命名为 .disabled）</p>
-            <p class="muted">列出插件注册信息（启用/禁用）。禁用后需要重启框架进程才会生效（因为插件在启动时加载）。</p>
+            <h2>插件管理（可点选）</h2>
+            <p class="muted">这是“框架内置/本地插件”的启用开关。切换后需要重启框架生效。</p>
             <div class="row">
               <button class="secondary" onclick="loadPlugins()">刷新插件列表</button>
             </div>
-            <pre id="plugins">加载中...</pre>
+            <div id="pluginsList" class="list">加载中...</div>
             <div class="row">
-              <input id="pluginName" placeholder="插件名（name）" />
-              <select id="pluginEnabled"><option value="true">启用</option><option value="false">禁用</option></select>
-              <button onclick="togglePlugin()">保存</button>
+              <button onclick="restartFromPlugins()">一键重启框架（让插件开关生效）</button>
             </div>
-            <pre id="pluginResult" class="muted">未操作</pre>
+            <div id="pluginResult" class="muted" style="margin-top:10px;">未操作</div>
+            <details>
+              <summary>查看原始插件注册表（JSON）</summary>
+              <pre id="plugins" class="muted">加载中...</pre>
+            </details>
           </div>
         </div>
       </section>
@@ -777,11 +804,19 @@ async function login(){
       const data = await jpost('/panel/api/send', {kind, target_id: Number(target), text, image_url});
       document.getElementById('sendResult').innerText = JSON.stringify(data, null, 2);
     }
+    function badge(label, ok) {
+      return `<span class="badge ${ok ? 'ok' : 'bad'}">${ok ? '✅' : '❌'} ${label}</span>`;
+    }
+    function esc(s) {
+      return (s || '').toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m] || m));
+    }
+
     async function loadPlugins() {
       const data = await jget('/panel/api/plugins');
-      // Show a simpler view for mobile: just plugin names & enabled.
       const plugins = (data.plugins || {});
       const names = Object.keys(plugins).sort();
+
+      // raw json for power users
       const simple = names.map(n => {
         const p = plugins[n] || {};
         const enabled = (p.enabled !== false);
@@ -790,19 +825,69 @@ async function login(){
         return {name: n, enabled, version, trigger};
       });
       document.getElementById('plugins').innerText = JSON.stringify(simple, null, 2);
+
+      // human list
+      const box = document.getElementById('pluginsList');
+      box.innerHTML = '';
+      for (const n of names) {
+        const p = plugins[n] || {};
+        const enabled = (p.enabled !== false);
+        const version = p.version || '';
+        const trigger = p.trigger || '';
+        const desc = `v${version || '?'}${trigger ? ' · ' + trigger : ''}`;
+        const el = document.createElement('div');
+        el.className = 'item';
+        el.innerHTML = `
+          <div class="meta">
+            <div class="name">${esc(n)}</div>
+            <div class="desc">${esc(desc)}</div>
+          </div>
+          <div class="actions">
+            <button class="${enabled ? 'secondary' : ''}" onclick="setPluginEnabled('${esc(n)}', ${enabled ? 'false' : 'true'})">${enabled ? '禁用' : '启用'}</button>
+          </div>
+        `;
+        box.appendChild(el);
+      }
     }
-    async function togglePlugin() {
-      const name = document.getElementById('pluginName').value.trim();
-      const enabled = document.getElementById('pluginEnabled').value === 'true';
-      if (!name) return;
+
+    async function setPluginEnabled(name, enabled) {
       const data = await jpost('/panel/api/plugins/toggle', {name, enabled});
-      document.getElementById('pluginResult').innerText = JSON.stringify(data, null, 2);
+      document.getElementById('pluginResult').innerText = `已保存：${name} -> ${enabled ? '启用' : '禁用'}（需要重启生效）`;
       await loadPlugins();
     }
+
+    async function restartFromPlugins() {
+      const data = await jpost('/panel/api/restart', {confirm: true});
+      document.getElementById('pluginResult').innerText = '已请求重启，页面将刷新…';
+      setTimeout(()=>location.reload(), 1200);
+    }
+
     async function runSelfcheck() {
       const log_lines = Number(document.getElementById('selfcheckLines').value || '120');
       const data = await jpost('/panel/api/selfcheck', {log_lines});
       document.getElementById('selfcheck').innerText = JSON.stringify(data, null, 2);
+
+      // human summary
+      const onebotOnline = !!(data.onebot_get_status?.data?.online ?? data.onebot_get_status?.online);
+      const napcatOnline = !!(data.napcat_login_info?.data?.online ?? data.napcat_login_info?.online);
+      const portsOk = !!(data.ports && data.ports.includes(':9000'));
+      const webuiUrl = data.napcat_webui_url || '';
+
+      const badges = [
+        badge('OneBot 在线', onebotOnline),
+        badge('NapCat 在线', napcatOnline),
+        badge('9000 端口监听', portsOk),
+      ];
+      document.getElementById('selfcheckBadges').innerHTML = badges.join(' ');
+
+      let tips = [];
+      if (!onebotOnline) tips.push('OneBot 可能离线：检查 NapCat/OneBot 配置与 3000 端口。');
+      if (!napcatOnline) tips.push(`NapCat 可能离线：建议打开 WebUI 扫码/验证。${webuiUrl ? 'WebUI：' + webuiUrl : ''}`);
+      const hits = data.napcat_log_hits || [];
+      const lastHit = hits.length ? hits[hits.length-1] : '';
+      if (lastHit) tips.push('最近日志线索：' + lastHit.slice(0, 180));
+      if (!tips.length) tips.push('看起来一切正常。');
+      document.getElementById('selfcheckSummary').innerText = tips.join('\n');
     }
     async function createBackup() {
       const include_sqlite = document.getElementById('backupIncludeSqlite').value === 'true';
