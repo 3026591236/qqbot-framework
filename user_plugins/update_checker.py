@@ -21,6 +21,10 @@ BUILD_INFO_FILE = BASE_DIR / "BUILD_INFO.json"
 VERSION_FILE = BASE_DIR / "VERSION"
 DEFAULT_REPO = os.getenv("QQBOT_UPDATE_REPO", "3026591236/qqbot-framework")
 DEFAULT_BRANCH = os.getenv("QQBOT_UPDATE_BRANCH", "main")
+# If the bot runs on a local branch that doesn't exist on origin (e.g. "publish-main"),
+# auto-update would fail because `git pull origin <branch>` can't find the remote ref.
+# Prefer pulling DEFAULT_BRANCH unless explicitly disabled.
+PREFER_DEFAULT_BRANCH_FOR_PULL = os.getenv("QQBOT_UPDATE_PREFER_DEFAULT_BRANCH", "true").lower() == "true"
 DEFAULT_TIMEOUT = float(os.getenv("QQBOT_UPDATE_TIMEOUT", "15"))
 AUTO_NOTIFY_ENABLED = os.getenv("QQBOT_UPDATE_AUTO_NOTIFY", "true").lower() == "true"
 AUTO_NOTIFY_INTERVAL = int(os.getenv("QQBOT_UPDATE_CHECK_INTERVAL", "1800"))
@@ -571,8 +575,10 @@ async def on_check_update(ctx):
         return
 
     update_summary = await _get_update_summary(local_sha, remote_sha, remote_message)
+
+    effective_branch = DEFAULT_BRANCH if PREFER_DEFAULT_BRANCH_FOR_PULL else branch
     _set_pending_update(
-        branch,
+        effective_branch,
         local_sha,
         remote_sha,
         remote_message,
@@ -583,7 +589,7 @@ async def on_check_update(ctx):
     if _can_auto_update():
         await ctx.reply(
             "检查完成：发现新版本\n"
-            f"分支：{branch}\n"
+            f"分支：{branch}（更新将拉取：{effective_branch}）\n"
             f"当前：{_format_version_label(local_version, local_sha)}\n"
             f"最新：{_format_version_label(remote_version, remote_sha)}\n"
             f"{update_summary}\n"
