@@ -441,7 +441,7 @@ async function login(){
     .brand { padding: 10px 10px 16px; border-bottom: 1px solid #24304a; margin-bottom: 12px; }
     .brand .title { font-size: 18px; font-weight: 700; }
     .brand .sub { font-size: 12px; margin-top: 2px; }
-    .menu a { display: block; padding: 10px 12px; border-radius: 12px; color: #e5e7eb; text-decoration: none; margin: 6px 0; border: 1px solid transparent; }
+    .menu a { display: block; padding: 10px 12px; border-radius: 12px; color: #e5e7eb; text-decoration: none; margin: 6px 0; border: 1px solid transparent; font-size: 14px; }
     .menu a:hover { background: #121a2b; border-color: #24304a; }
     .menu a.active { background: #1a2a52; border-color: #2b3a64; }
     .foot { padding: 10px 12px; font-size: 12px; border-top: 1px solid #24304a; margin-top: 14px; }
@@ -463,7 +463,7 @@ async function login(){
     input, select, button { border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: #e5e7eb; padding: 10px 12px; }
     button { cursor: pointer; background: #2563eb; border-color: #2563eb; }
     button.secondary { background: #1e293b; border-color: #334155; }
-    pre { white-space: pre-wrap; word-break: break-word; background: #0f172a; padding: 12px; border-radius: 12px; max-height: 420px; overflow: auto; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #0f172a; padding: 12px; border-radius: 12px; max-height: 420px; overflow: auto; font-size: 12px; line-height: 1.45; }
     img { max-width: 100%; border-radius: 12px; background: #fff; }
     .kv { line-height: 1.8; }
   </style>
@@ -591,6 +591,7 @@ async function login(){
         <div class="grid">
           <div class="card" style="grid-column: 1 / -1;">
             <h2>插件管理</h2>
+            <p class="muted">插件商店命令：插件市场 / 安装插件 xxx / 已装插件 / 更新插件 xxx / 卸载插件 xxx（卸载是安全停用：重命名为 .disabled）</p>
             <p class="muted">列出插件注册信息（启用/禁用）。禁用后需要重启框架进程才会生效（因为插件在启动时加载）。</p>
             <div class="row">
               <button class="secondary" onclick="loadPlugins()">刷新插件列表</button>
@@ -715,7 +716,17 @@ async function login(){
     }
     async function loadPlugins() {
       const data = await jget('/panel/api/plugins');
-      document.getElementById('plugins').innerText = JSON.stringify(data, null, 2);
+      // Show a simpler view for mobile: just plugin names & enabled.
+      const plugins = (data.plugins || {});
+      const names = Object.keys(plugins).sort();
+      const simple = names.map(n => {
+        const p = plugins[n] || {};
+        const enabled = (p.enabled !== false);
+        const version = p.version || '';
+        const trigger = p.trigger || '';
+        return {name: n, enabled, version, trigger};
+      });
+      document.getElementById('plugins').innerText = JSON.stringify(simple, null, 2);
     }
     async function togglePlugin() {
       const name = document.getElementById('pluginName').value.trim();
