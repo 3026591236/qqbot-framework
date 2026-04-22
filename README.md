@@ -316,6 +316,7 @@ AI 你好
 详细规范请看：
 
 - `docs/PLUGIN_GUIDE.md`
+- `docs/CDK_REWARD_QUICKSTART.md`（发卡奖励插件快速说明）
 
 ## 11. 插件安装与管理
 
