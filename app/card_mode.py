@@ -5,7 +5,11 @@ import time
 from pathlib import Path
 
 from app.config import settings
-from app.renderers.card_image import render_info_card
+from app.renderers.card_image import (
+    DEFAULT_MAX_CARD_HEIGHT,
+    paginate_info_card_lines,
+    render_info_card,
+)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_FILE = BASE_DIR / ".env"
@@ -92,13 +96,19 @@ def render_text_to_card_images(message: str, title: str = "QQ机器人消息") -
         title = raw_lines[0]
         body = raw_lines[1:] or ["（无详细内容）"]
 
-    page_size = 10
+    page_groups = paginate_info_card_lines(
+        title=title,
+        subtitle=subtitle,
+        lines=body,
+        footer_builder=lambda index, total: "当前为全局图片卡片模式" if total <= 1 else f"当前为全局图片卡片模式 · 第 {index + 1}/{total} 页",
+        max_height=DEFAULT_MAX_CARD_HEIGHT,
+    )
+
     pages: list[str] = []
-    total = max(1, (len(body) + page_size - 1) // page_size)
-    for index in range(total):
-        chunk = body[index * page_size:(index + 1) * page_size]
+    total = len(page_groups)
+    for index, chunk in enumerate(page_groups):
         output = cards_dir / f"global_{ts}_{index + 1}.png"
-        footer = f"当前为全局图片卡片模式 · 第 {index + 1}/{total} 页"
+        footer = "当前为全局图片卡片模式" if total <= 1 else f"当前为全局图片卡片模式 · 第 {index + 1}/{total} 页"
         path = render_info_card(
             title=title,
             subtitle=subtitle,

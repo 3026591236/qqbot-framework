@@ -13,6 +13,8 @@ TEXT_COLOR = "#374151"
 MUTED_COLOR = "#6b7280"
 ACCENT = "#4f46e5"
 BORDER = "#dbe3f0"
+DEFAULT_CARD_WIDTH = 1000
+DEFAULT_MAX_CARD_HEIGHT = 2400
 logger = logging.getLogger(__name__)
 
 
@@ -74,29 +76,33 @@ def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> li
     return result or [""]
 
 
+def _line_height(draw: ImageDraw.ImageDraw, text: str, font) -> int:
+    bbox = draw.textbbox((0, 0), text or " ", font=font)
+    return max(bbox[3] - bbox[1], 0)
+
+
+
 def _measure_multiline(draw: ImageDraw.ImageDraw, lines: list[str], font, spacing: int) -> int:
     height = 0
     for line in lines:
-        bbox = draw.textbbox((0, 0), line or " ", font=font)
-        height += (bbox[3] - bbox[1]) + spacing
+        height += _line_height(draw, line, font) + spacing
     return max(height - spacing, 0)
 
 
-def render_info_card(
+def _build_card_layout(
     *,
     title: str,
     subtitle: str = "",
     lines: Iterable[str],
     footer: str = "",
-    output_path: str,
-) -> str:
+    width: int = DEFAULT_CARD_WIDTH,
+) -> dict:
     items = [str(x).strip() for x in lines if str(x).strip()]
     title_font = _load_font(38, bold=True)
     subtitle_font = _load_font(22)
     text_font = _load_font(28)
     footer_font = _load_font(22)
 
-    width = 1000
     outer = 28
     inner = 36
     line_spacing = 16
@@ -131,6 +137,98 @@ def render_info_card(
     panel_h += inner
 
     height = panel_h + outer * 2
+    return {
+        "items": items,
+        "title_font": title_font,
+        "subtitle_font": subtitle_font,
+        "text_font": text_font,
+        "footer_font": footer_font,
+        "width": width,
+        "height": height,
+        "outer": outer,
+        "inner": inner,
+        "line_spacing": line_spacing,
+        "wrapped_title": wrapped_title,
+        "wrapped_subtitle": wrapped_subtitle,
+        "wrapped_body": wrapped_body,
+        "wrapped_footer": wrapped_footer,
+    }
+
+
+
+def estimate_info_card_height(
+    *,
+    title: str,
+    subtitle: str = "",
+    lines: Iterable[str],
+    footer: str = "",
+    width: int = DEFAULT_CARD_WIDTH,
+) -> int:
+    return int(_build_card_layout(title=title, subtitle=subtitle, lines=lines, footer=footer, width=width)["height"])
+
+
+
+def paginate_info_card_lines(
+    *,
+    title: str,
+    subtitle: str = "",
+    lines: Iterable[str],
+    footer_builder=None,
+    max_height: int = DEFAULT_MAX_CARD_HEIGHT,
+    width: int = DEFAULT_CARD_WIDTH,
+) -> list[list[str]]:
+    items = [str(x).strip() for x in lines if str(x).strip()]
+    if not items:
+        return [["（空消息）"]]
+
+    if footer_builder is None:
+        footer_builder = lambda index, total: ""
+
+    if estimate_info_card_height(title=title, subtitle=subtitle, lines=items, footer=footer_builder(0, 1), width=width) <= max_height:
+        return [items]
+
+    pages: list[list[str]] = []
+    current: list[str] = []
+    for item in items:
+        candidate = current + [item]
+        footer = footer_builder(len(pages), len(pages) + 1)
+        if current and estimate_info_card_height(title=title, subtitle=subtitle, lines=candidate, footer=footer, width=width) > max_height:
+            pages.append(current)
+            current = [item]
+        else:
+            current = candidate
+
+    if current:
+        pages.append(current)
+
+    return pages or [["（空消息）"]]
+
+
+
+def render_info_card(
+    *,
+    title: str,
+    subtitle: str = "",
+    lines: Iterable[str],
+    footer: str = "",
+    output_path: str,
+) -> str:
+    layout = _build_card_layout(title=title, subtitle=subtitle, lines=lines, footer=footer)
+
+    width = layout["width"]
+    height = layout["height"]
+    outer = layout["outer"]
+    inner = layout["inner"]
+    line_spacing = layout["line_spacing"]
+    title_font = layout["title_font"]
+    subtitle_font = layout["subtitle_font"]
+    text_font = layout["text_font"]
+    footer_font = layout["footer_font"]
+    wrapped_title = layout["wrapped_title"]
+    wrapped_subtitle = layout["wrapped_subtitle"]
+    wrapped_body = layout["wrapped_body"]
+    wrapped_footer = layout["wrapped_footer"]
+
     img = Image.new("RGB", (width, height), CARD_BG)
     draw = ImageDraw.Draw(img)
 
@@ -141,13 +239,13 @@ def render_info_card(
     y = outer + inner
     for line in wrapped_title:
         draw.text((x, y), line, fill=TITLE_COLOR, font=title_font)
-        y += draw.textbbox((0, 0), line or " ", font=title_font)[3] + 10
+        y += _line_height(draw, line, title_font) + 10
     y += 2
 
     if subtitle:
         for line in wrapped_subtitle:
             draw.text((x, y), line, fill=MUTED_COLOR, font=subtitle_font)
-            y += draw.textbbox((0, 0), line or " ", font=subtitle_font)[3] + 8
+            y += _line_height(draw, line, subtitle_font) + 8
         y += 10
 
     draw.line((x, y, width - outer - inner, y), fill=BORDER, width=2)
@@ -155,7 +253,7 @@ def render_info_card(
 
     for line in wrapped_body:
         draw.text((x, y), line, fill=TEXT_COLOR, font=text_font)
-        y += draw.textbbox((0, 0), line or " ", font=text_font)[3] + line_spacing
+        y += _line_height(draw, line, text_font) + line_spacing
 
     if footer:
         y += 10
@@ -163,7 +261,7 @@ def render_info_card(
         y += 18
         for line in wrapped_footer:
             draw.text((x, y), line, fill=MUTED_COLOR, font=footer_font)
-            y += draw.textbbox((0, 0), line or " ", font=footer_font)[3] + 8
+            y += _line_height(draw, line, footer_font) + 8
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
