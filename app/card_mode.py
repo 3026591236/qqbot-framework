@@ -12,6 +12,9 @@ from app.renderers.card_image import (
     render_info_card,
 )
 
+CARD_STYLE_KEY = "QQBOT_CARD_STYLE"
+DEFAULT_CARD_STYLE = os.getenv(CARD_STYLE_KEY, "light").strip().lower() or "light"
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_FILE = BASE_DIR / ".env"
 CARD_MODE_KEY = "QQBOT_CARD_MODE"
@@ -119,7 +122,7 @@ def build_image_url(filename: str) -> str:
     return settings.public_base_url.rstrip("/") + "/static/cards/" + filename
 
 
-def render_text_to_card_images(message: str, title: str = "QQ机器人消息") -> list[str]:
+def render_text_to_card_images(message: str, title: str = "QQ机器人消息", style: str | None = None) -> list[str]:
     cards_dir = Path(settings.data_dir) / "cards"
     cards_dir.mkdir(parents=True, exist_ok=True)
     ts = int(time.time() * 1000)
@@ -129,7 +132,9 @@ def render_text_to_card_images(message: str, title: str = "QQ机器人消息") -
     if not raw_lines:
         raw_lines = ["（空消息）"]
 
-    subtitle = "全局图片卡片模式"
+    style_key = (style or os.getenv(CARD_STYLE_KEY, DEFAULT_CARD_STYLE)).strip().lower() or "light"
+
+    subtitle = f"图片卡片风格：{style_key}"
     body = raw_lines
     if len(raw_lines) >= 2 and len(raw_lines[0]) <= 22:
         title = raw_lines[0]
@@ -139,21 +144,23 @@ def render_text_to_card_images(message: str, title: str = "QQ机器人消息") -
         title=title,
         subtitle=subtitle,
         lines=body,
-        footer_builder=lambda index, total: "当前为全局图片卡片模式" if total <= 1 else f"当前为全局图片卡片模式 · 第 {index + 1}/{total} 页",
+        footer_builder=lambda index, total: "图片卡片" if total <= 1 else f"图片卡片 · 第 {index + 1}/{total} 页",
         max_height=DEFAULT_MAX_CARD_HEIGHT,
+        style=style_key,
     )
 
     pages: list[str] = []
     total = len(page_groups)
     for index, chunk in enumerate(page_groups):
         output = cards_dir / f"global_{ts}_{index + 1}.png"
-        footer = "当前为全局图片卡片模式" if total <= 1 else f"当前为全局图片卡片模式 · 第 {index + 1}/{total} 页"
+        footer = "图片卡片" if total <= 1 else f"图片卡片 · 第 {index + 1}/{total} 页"
         path = render_info_card(
             title=title,
             subtitle=subtitle,
             lines=chunk,
             footer=footer,
             output_path=str(output),
+            style=style_key,
         )
         pages.append(build_image_url(Path(path).name))
     return pages

@@ -6,38 +6,133 @@ from typing import Iterable
 
 from PIL import Image, ImageDraw, ImageFont
 
-CARD_BG = "#f3f6fb"
-PANEL_BG = "#ffffff"
-TITLE_COLOR = "#111827"
-TEXT_COLOR = "#374151"
-MUTED_COLOR = "#6b7280"
-ACCENT = "#4f46e5"
-BORDER = "#dbe3f0"
+# NOTE:
+# These styles only affect bot-rendered image cards (PIL generated images).
+# They do NOT affect any platform-native cards (json/xml/etc).
+
 DEFAULT_CARD_WIDTH = 1000
 DEFAULT_MAX_CARD_HEIGHT = 2400
+
 logger = logging.getLogger(__name__)
+
+
+CARD_STYLES: dict[str, dict] = {
+    # Default (existing) light style
+    "light": {
+        "card_bg": "#f3f6fb",
+        "panel_bg": "#ffffff",
+        "title": "#111827",
+        "text": "#374151",
+        "muted": "#6b7280",
+        "accent": "#4f46e5",
+        "border": "#dbe3f0",
+        "radius": 30,
+        "outer": 28,
+        "inner": 36,
+        "line_spacing": 16,
+        "title_size": 38,
+        "subtitle_size": 22,
+        "text_size": 28,
+        "footer_size": 22,
+        "accent_bar": True,
+        "bullet": "• ",
+        "indent": "  ",
+    },
+    # Dark mode
+    "dark": {
+        "card_bg": "#0b1020",
+        "panel_bg": "#0f172a",
+        "title": "#e5e7eb",
+        "text": "#cbd5e1",
+        "muted": "#94a3b8",
+        "accent": "#60a5fa",
+        "border": "#1f2a44",
+        "radius": 30,
+        "outer": 28,
+        "inner": 36,
+        "line_spacing": 16,
+        "title_size": 38,
+        "subtitle_size": 22,
+        "text_size": 28,
+        "footer_size": 22,
+        "accent_bar": True,
+        "bullet": "• ",
+        "indent": "  ",
+    },
+    # Compact: more content per page
+    "compact": {
+        "card_bg": "#f8fafc",
+        "panel_bg": "#ffffff",
+        "title": "#0f172a",
+        "text": "#334155",
+        "muted": "#64748b",
+        "accent": "#10b981",
+        "border": "#e2e8f0",
+        "radius": 22,
+        "outer": 20,
+        "inner": 26,
+        "line_spacing": 10,
+        "title_size": 34,
+        "subtitle_size": 20,
+        "text_size": 24,
+        "footer_size": 20,
+        "accent_bar": False,
+        "bullet": "- ",
+        "indent": "  ",
+    },
+    # Minimal: clean, no accent bar
+    "minimal": {
+        "card_bg": "#ffffff",
+        "panel_bg": "#ffffff",
+        "title": "#111827",
+        "text": "#374151",
+        "muted": "#6b7280",
+        "accent": "#111827",
+        "border": "#e5e7eb",
+        "radius": 18,
+        "outer": 18,
+        "inner": 26,
+        "line_spacing": 12,
+        "title_size": 36,
+        "subtitle_size": 20,
+        "text_size": 26,
+        "footer_size": 20,
+        "accent_bar": False,
+        "bullet": "• ",
+        "indent": "  ",
+    },
+}
+
+
+def get_card_style(style: str | None) -> dict:
+    key = (style or "").strip().lower() or "light"
+    return CARD_STYLES.get(key, CARD_STYLES["light"])
 
 
 def _load_font(size: int, bold: bool = False):
     candidates = []
     if bold:
-        candidates.extend([
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-            "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
-            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-            "/usr/share/fonts/truetype/arphic/ukai.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        ])
+        candidates.extend(
+            [
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+                "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+                "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+                "/usr/share/fonts/truetype/arphic/ukai.ttc",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            ]
+        )
     else:
-        candidates.extend([
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-            "/usr/share/fonts/truetype/arphic/ukai.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        ])
+        candidates.extend(
+            [
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+                "/usr/share/fonts/truetype/arphic/ukai.ttc",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ]
+        )
     for path in candidates:
         try:
             font = ImageFont.truetype(path, size)
@@ -81,7 +176,6 @@ def _line_height(draw: ImageDraw.ImageDraw, text: str, font) -> int:
     return max(bbox[3] - bbox[1], 0)
 
 
-
 def _measure_multiline(draw: ImageDraw.ImageDraw, lines: list[str], font, spacing: int) -> int:
     height = 0
     for line in lines:
@@ -96,31 +190,39 @@ def _build_card_layout(
     lines: Iterable[str],
     footer: str = "",
     width: int = DEFAULT_CARD_WIDTH,
+    style: str = "light",
 ) -> dict:
+    theme = get_card_style(style)
+
     items = [str(x).strip() for x in lines if str(x).strip()]
-    title_font = _load_font(38, bold=True)
-    subtitle_font = _load_font(22)
-    text_font = _load_font(28)
-    footer_font = _load_font(22)
+    title_font = _load_font(int(theme["title_size"]), bold=True)
+    subtitle_font = _load_font(int(theme["subtitle_size"]))
+    text_font = _load_font(int(theme["text_size"]))
+    footer_font = _load_font(int(theme["footer_size"]))
 
-    outer = 28
-    inner = 36
-    line_spacing = 16
+    outer = int(theme["outer"])
+    inner = int(theme["inner"])
+    line_spacing = int(theme["line_spacing"])
 
-    temp = Image.new("RGB", (width, 1200), CARD_BG)
+    temp = Image.new("RGB", (width, 1200), theme["card_bg"])
     draw = ImageDraw.Draw(temp)
 
     content_max_width = width - (outer + 56) - (outer + inner)
     wrapped_title = _wrap_text(draw, title, title_font, content_max_width)
     wrapped_subtitle = _wrap_text(draw, subtitle, subtitle_font, content_max_width) if subtitle else []
+
+    bullet = str(theme.get("bullet", "• "))
+    indent = str(theme.get("indent", "  "))
+
     wrapped_body: list[str] = []
     for item in items:
         wrapped = _wrap_text(draw, item, text_font, content_max_width - 40)
         if wrapped:
-            wrapped_body.append(f"• {wrapped[0]}")
-            wrapped_body.extend(f"  {line}" for line in wrapped[1:])
+            wrapped_body.append(f"{bullet}{wrapped[0]}")
+            wrapped_body.extend(f"{indent}{line}" for line in wrapped[1:])
         else:
-            wrapped_body.append("•")
+            wrapped_body.append(bullet.strip() or "•")
+
     wrapped_footer = _wrap_text(draw, footer, footer_font, content_max_width) if footer else []
 
     title_h = _measure_multiline(draw, wrapped_title, title_font, 10)
@@ -138,6 +240,8 @@ def _build_card_layout(
 
     height = panel_h + outer * 2
     return {
+        "theme": theme,
+        "style": style,
         "items": items,
         "title_font": title_font,
         "subtitle_font": subtitle_font,
@@ -155,7 +259,6 @@ def _build_card_layout(
     }
 
 
-
 def estimate_info_card_height(
     *,
     title: str,
@@ -163,9 +266,13 @@ def estimate_info_card_height(
     lines: Iterable[str],
     footer: str = "",
     width: int = DEFAULT_CARD_WIDTH,
+    style: str = "light",
 ) -> int:
-    return int(_build_card_layout(title=title, subtitle=subtitle, lines=lines, footer=footer, width=width)["height"])
-
+    return int(
+        _build_card_layout(title=title, subtitle=subtitle, lines=lines, footer=footer, width=width, style=style)[
+            "height"
+        ]
+    )
 
 
 def paginate_info_card_lines(
@@ -176,6 +283,7 @@ def paginate_info_card_lines(
     footer_builder=None,
     max_height: int = DEFAULT_MAX_CARD_HEIGHT,
     width: int = DEFAULT_CARD_WIDTH,
+    style: str = "light",
 ) -> list[list[str]]:
     items = [str(x).strip() for x in lines if str(x).strip()]
     if not items:
@@ -184,7 +292,17 @@ def paginate_info_card_lines(
     if footer_builder is None:
         footer_builder = lambda index, total: ""
 
-    if estimate_info_card_height(title=title, subtitle=subtitle, lines=items, footer=footer_builder(0, 1), width=width) <= max_height:
+    if (
+        estimate_info_card_height(
+            title=title,
+            subtitle=subtitle,
+            lines=items,
+            footer=footer_builder(0, 1),
+            width=width,
+            style=style,
+        )
+        <= max_height
+    ):
         return [items]
 
     pages: list[list[str]] = []
@@ -192,7 +310,17 @@ def paginate_info_card_lines(
     for item in items:
         candidate = current + [item]
         footer = footer_builder(len(pages), len(pages) + 1)
-        if current and estimate_info_card_height(title=title, subtitle=subtitle, lines=candidate, footer=footer, width=width) > max_height:
+        if current and (
+            estimate_info_card_height(
+                title=title,
+                subtitle=subtitle,
+                lines=candidate,
+                footer=footer,
+                width=width,
+                style=style,
+            )
+            > max_height
+        ):
             pages.append(current)
             current = [item]
         else:
@@ -204,7 +332,6 @@ def paginate_info_card_lines(
     return pages or [["（空消息）"]]
 
 
-
 def render_info_card(
     *,
     title: str,
@@ -212,8 +339,11 @@ def render_info_card(
     lines: Iterable[str],
     footer: str = "",
     output_path: str,
+    style: str = "light",
 ) -> str:
-    layout = _build_card_layout(title=title, subtitle=subtitle, lines=lines, footer=footer)
+    layout = _build_card_layout(title=title, subtitle=subtitle, lines=lines, footer=footer, style=style)
+
+    theme = layout["theme"]
 
     width = layout["width"]
     height = layout["height"]
@@ -229,38 +359,50 @@ def render_info_card(
     wrapped_body = layout["wrapped_body"]
     wrapped_footer = layout["wrapped_footer"]
 
-    img = Image.new("RGB", (width, height), CARD_BG)
+    img = Image.new("RGB", (width, height), theme["card_bg"])
     draw = ImageDraw.Draw(img)
 
-    draw.rounded_rectangle((outer, outer, width - outer, height - outer), radius=30, fill=PANEL_BG, outline=BORDER, width=2)
-    draw.rounded_rectangle((outer + 24, outer + 24, outer + 24 + 10, height - outer - 24), radius=5, fill=ACCENT)
+    radius = int(theme.get("radius", 30))
+    draw.rounded_rectangle(
+        (outer, outer, width - outer, height - outer),
+        radius=radius,
+        fill=theme["panel_bg"],
+        outline=theme["border"],
+        width=2,
+    )
+    if bool(theme.get("accent_bar", True)):
+        draw.rounded_rectangle(
+            (outer + 24, outer + 24, outer + 24 + 10, height - outer - 24),
+            radius=5,
+            fill=theme["accent"],
+        )
 
     x = outer + 56
     y = outer + inner
     for line in wrapped_title:
-        draw.text((x, y), line, fill=TITLE_COLOR, font=title_font)
+        draw.text((x, y), line, fill=theme["title"], font=title_font)
         y += _line_height(draw, line, title_font) + 10
     y += 2
 
     if subtitle:
         for line in wrapped_subtitle:
-            draw.text((x, y), line, fill=MUTED_COLOR, font=subtitle_font)
+            draw.text((x, y), line, fill=theme["muted"], font=subtitle_font)
             y += _line_height(draw, line, subtitle_font) + 8
         y += 10
 
-    draw.line((x, y, width - outer - inner, y), fill=BORDER, width=2)
+    draw.line((x, y, width - outer - inner, y), fill=theme["border"], width=2)
     y += 24
 
     for line in wrapped_body:
-        draw.text((x, y), line, fill=TEXT_COLOR, font=text_font)
+        draw.text((x, y), line, fill=theme["text"], font=text_font)
         y += _line_height(draw, line, text_font) + line_spacing
 
     if footer:
         y += 10
-        draw.line((x, y, width - outer - inner, y), fill=BORDER, width=2)
+        draw.line((x, y, width - outer - inner, y), fill=theme["border"], width=2)
         y += 18
         for line in wrapped_footer:
-            draw.text((x, y), line, fill=MUTED_COLOR, font=footer_font)
+            draw.text((x, y), line, fill=theme["muted"], font=footer_font)
             y += _line_height(draw, line, footer_font) + 8
 
     out = Path(output_path)

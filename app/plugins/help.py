@@ -218,6 +218,8 @@ card_menu = CommandPlugin(
 async def on_card_menu(ctx):
     await ctx.reply(
         "卡片/伪卡片功能\n"
+        "- 卡片风格：查看当前图片卡片风格\n"
+        "- 切换卡片风格 light/dark/compact/minimal：切换图片卡片风格（主人）\n"
         "- 卡片帮助\n"
         "- 测试伪卡片\n"
         "- 发伪卡片 标题|内容|链接\n"
