@@ -18,7 +18,9 @@ def _ensure_tables() -> None:
                 enabled INTEGER NOT NULL DEFAULT 1,
                 auto_ban INTEGER NOT NULL DEFAULT 1,
                 warn_threshold INTEGER NOT NULL DEFAULT 3,
-                auto_ban_duration INTEGER NOT NULL DEFAULT 600
+                auto_ban_duration INTEGER NOT NULL DEFAULT 600,
+                auto_recall_enabled INTEGER NOT NULL DEFAULT 0,
+                auto_recall_seconds INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -110,17 +112,19 @@ def _parse_duration_seconds(raw: str) -> int | None:
 
 def _get_settings(group_id: int) -> dict:
     with get_conn() as conn:
+        conn.execute("INSERT OR IGNORE INTO group_admin_settings (group_id) VALUES (?)", (group_id,))
         row = conn.execute(
-            "SELECT enabled, auto_ban, warn_threshold, auto_ban_duration FROM group_admin_settings WHERE group_id=?",
+            "SELECT enabled, auto_ban, warn_threshold, auto_ban_duration, auto_recall_enabled, auto_recall_seconds FROM group_admin_settings WHERE group_id=?",
             (group_id,),
         ).fetchone()
         if row is None:
-            conn.execute("INSERT OR IGNORE INTO group_admin_settings (group_id) VALUES (?)", (group_id,))
             return {
                 "enabled": 1,
                 "auto_ban": 1,
                 "warn_threshold": 3,
                 "auto_ban_duration": 600,
+                "auto_recall_enabled": 0,
+                "auto_recall_seconds": 0,
             }
         return dict(row)
 
@@ -129,6 +133,16 @@ def _update_setting(group_id: int, field: str, value: int) -> None:
     _get_settings(group_id)
     with get_conn() as conn:
         conn.execute(f"UPDATE group_admin_settings SET {field}=? WHERE group_id=?", (value, group_id))
+
+
+def get_auto_recall_seconds(group_id: int | None) -> int:
+    if not group_id:
+        return 0
+    settings = _get_settings(int(group_id))
+    if int(settings.get("auto_recall_enabled") or 0) != 1:
+        return 0
+    seconds = int(settings.get("auto_recall_seconds") or 0)
+    return max(0, seconds)
 
 
 def _list_words(group_id: int) -> list[str]:
@@ -248,6 +262,9 @@ async def on_group_admin_help(ctx):
         "群管帮助\n"
         "群管状态\n"
         "群管开 / 群管关\n"
+        "开启自动撤回 秒数\n"
+        "关闭自动撤回\n"
+        "自动撤回状态\n"
         "撤回 [消息ID]\n"
         "禁言 @某人 10m/1h/1d\n"
         "解禁 @某人\n"
@@ -323,6 +340,78 @@ async def on_group_admin_toggle(ctx):
         return
     _update_setting(ctx.group_id, "enabled", 1 if arg == "开" else 0)
     await ctx.reply("已开启群管系统" if arg == "开" else "已关闭群管系统")
+
+
+auto_recall_status = CommandPlugin(
+    name="auto_recall_status",
+    command="自动撤回状态",
+    description="show auto recall status",
+    meta=PluginMeta(name="auto_recall_status", version="2.1.0", author="OpenClaw", description="自动撤回状态"),
+)
+
+
+@auto_recall_status.handle
+async def on_auto_recall_status(ctx):
+    if not _ensure_group(ctx):
+        await ctx.reply("这个命令只能在群里用")
+        return
+    settings = _get_settings(int(ctx.group_id))
+    enabled = int(settings.get("auto_recall_enabled") or 0) == 1
+    seconds = int(settings.get("auto_recall_seconds") or 0)
+    if enabled and seconds > 0:
+        await ctx.reply(f"当前本群自动撤回：已开启\n撤回时间：{seconds} 秒")
+    else:
+        await ctx.reply("当前本群自动撤回：已关闭")
+
+
+enable_auto_recall = CommandPlugin(
+    name="enable_auto_recall",
+    command="开启自动撤回",
+    description="enable auto recall for this group",
+    meta=PluginMeta(name="enable_auto_recall", version="2.1.0", author="OpenClaw", description="开启自动撤回"),
+)
+
+
+@enable_auto_recall.handle
+async def on_enable_auto_recall(ctx):
+    if not _ensure_group(ctx):
+        await ctx.reply("这个命令只能在群里用")
+        return
+    if not _is_group_admin(ctx):
+        await ctx.reply("你没有群管权限")
+        return
+    arg = _extract_after_command(ctx, "开启自动撤回").strip()
+    if not arg.isdigit():
+        await ctx.reply("用法：开启自动撤回 秒数")
+        return
+    seconds = int(arg)
+    if seconds <= 0:
+        await ctx.reply("秒数必须大于 0")
+        return
+    _update_setting(int(ctx.group_id), "auto_recall_enabled", 1)
+    _update_setting(int(ctx.group_id), "auto_recall_seconds", seconds)
+    await ctx.reply(f"已开启本群自动撤回\n撤回时间：{seconds} 秒")
+
+
+disable_auto_recall = CommandPlugin(
+    name="disable_auto_recall",
+    command="关闭自动撤回",
+    description="disable auto recall for this group",
+    meta=PluginMeta(name="disable_auto_recall", version="2.1.0", author="OpenClaw", description="关闭自动撤回"),
+)
+
+
+@disable_auto_recall.handle
+async def on_disable_auto_recall(ctx):
+    if not _ensure_group(ctx):
+        await ctx.reply("这个命令只能在群里用")
+        return
+    if not _is_group_admin(ctx):
+        await ctx.reply("你没有群管权限")
+        return
+    _update_setting(int(ctx.group_id), "auto_recall_enabled", 0)
+    _update_setting(int(ctx.group_id), "auto_recall_seconds", 0)
+    await ctx.reply("已关闭本群自动撤回")
 
 
 recall_msg = CommandPlugin(

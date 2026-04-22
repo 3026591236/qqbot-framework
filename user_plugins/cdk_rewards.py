@@ -5,7 +5,7 @@ from typing import Optional
 
 from app.auth import is_owner
 from app.core.plugin import CommandPlugin, PluginMeta
-from app.db import get_conn
+from app.db import _ensure_column, get_conn
 
 plugin = None
 
@@ -71,6 +71,9 @@ def _ensure_tables() -> None:
                 claimed_at TEXT DEFAULT NULL,
                 claim_reason TEXT NOT NULL DEFAULT '',
                 rule_key TEXT NOT NULL DEFAULT '',
+                quantity INTEGER NOT NULL DEFAULT 1,
+                used_count INTEGER NOT NULL DEFAULT 0,
+                reusable INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(group_id, pool_name, cdk_code)
             )
             """
@@ -111,6 +114,9 @@ def _ensure_tables() -> None:
             )
             """
         )
+        _ensure_column(conn, "cdk_pool", "quantity", "quantity INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "cdk_pool", "used_count", "used_count INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "cdk_pool", "reusable", "reusable INTEGER NOT NULL DEFAULT 0")
 
 
 _ensure_tables()
@@ -252,13 +258,29 @@ def _list_invite_rules(group_id: int) -> list[tuple[int, str]]:
         return [(int(r["invite_count"]), str(r["pool_name"])) for r in rows]
 
 
-def _add_cdk(group_id: int, pool_name: str, cdk_code: str, added_by: int | None) -> bool:
+def _add_cdk(group_id: int, pool_name: str, cdk_code: str, added_by: int | None, *, reusable: bool = False) -> bool:
     try:
         with get_conn() as conn:
-            conn.execute(
-                "INSERT INTO cdk_pool (group_id, pool_name, cdk_code, added_by, added_at) VALUES (?, ?, ?, ?, ?)",
-                (group_id, pool_name, cdk_code, int(added_by or 0), _now()),
-            )
+            existing = conn.execute(
+                "SELECT id, quantity, reusable FROM cdk_pool WHERE group_id=? AND pool_name=? AND cdk_code=?",
+                (group_id, pool_name, cdk_code),
+            ).fetchone()
+            if existing is not None:
+                if reusable:
+                    conn.execute(
+                        "UPDATE cdk_pool SET reusable=1, added_by=?, added_at=? WHERE id=?",
+                        (int(added_by or 0), _now(), int(existing["id"])),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE cdk_pool SET quantity=?, reusable=0, added_by=?, added_at=? WHERE id=?",
+                        (int(existing["quantity"] or 1) + 1, int(added_by or 0), _now(), int(existing["id"])),
+                    )
+            else:
+                conn.execute(
+                    "INSERT INTO cdk_pool (group_id, pool_name, cdk_code, added_by, added_at, quantity, used_count, reusable) VALUES (?, ?, ?, ?, ?, 1, 0, ?)",
+                    (group_id, pool_name, cdk_code, int(added_by or 0), _now(), 1 if reusable else 0),
+                )
         return True
     except Exception:
         return False
@@ -274,7 +296,7 @@ def _claim_cdk(group_id: int, pool_name: str, user_id: int, reward_type: str, ru
             return None
 
         row = conn.execute(
-            "SELECT id, cdk_code FROM cdk_pool WHERE group_id=? AND pool_name=? AND claimed_by IS NULL ORDER BY id ASC LIMIT 1",
+            "SELECT id, cdk_code, quantity, used_count, reusable FROM cdk_pool WHERE group_id=? AND pool_name=? AND (reusable=1 OR used_count < quantity) ORDER BY reusable DESC, id ASC LIMIT 1",
             (group_id, pool_name),
         ).fetchone()
         if row is None:
@@ -282,11 +304,19 @@ def _claim_cdk(group_id: int, pool_name: str, user_id: int, reward_type: str, ru
 
         cdk_id = int(row["id"])
         cdk_code = str(row["cdk_code"])
+        reusable = int(row["reusable"] or 0) == 1
         now = _now()
-        conn.execute(
-            "UPDATE cdk_pool SET claimed_by=?, claimed_at=?, claim_reason=?, rule_key=? WHERE id=? AND claimed_by IS NULL",
-            (user_id, now, reward_type, rule_key, cdk_id),
-        )
+        if reusable:
+            conn.execute(
+                "UPDATE cdk_pool SET used_count=used_count+1, claimed_by=?, claimed_at=?, claim_reason=?, rule_key=? WHERE id=?",
+                (user_id, now, reward_type, rule_key, cdk_id),
+            )
+        else:
+            next_used = int(row["used_count"] or 0) + 1
+            conn.execute(
+                "UPDATE cdk_pool SET used_count=?, claimed_by=?, claimed_at=?, claim_reason=?, rule_key=? WHERE id=? AND used_count < quantity",
+                (next_used, user_id, now, reward_type, rule_key, cdk_id),
+            )
         updated = conn.total_changes
         if updated <= 0:
             return ""
@@ -301,14 +331,16 @@ def _pool_stats(group_id: int, pool_name: str | None = None) -> list[dict]:
     with get_conn() as conn:
         if pool_name:
             rows = conn.execute(
-                "SELECT pool_name, COUNT(*) AS total, SUM(CASE WHEN claimed_by IS NULL THEN 1 ELSE 0 END) AS available, "
-                "SUM(CASE WHEN claimed_by IS NOT NULL THEN 1 ELSE 0 END) AS used FROM cdk_pool WHERE group_id=? AND pool_name=? GROUP BY pool_name ORDER BY pool_name ASC",
+                "SELECT pool_name, SUM(CASE WHEN reusable=1 THEN 1 ELSE quantity END) AS total, "
+                "SUM(CASE WHEN reusable=1 THEN 999999999 ELSE quantity - used_count END) AS available, "
+                "SUM(used_count) AS used, MAX(reusable) AS has_reusable FROM cdk_pool WHERE group_id=? AND pool_name=? GROUP BY pool_name ORDER BY pool_name ASC",
                 (group_id, pool_name),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT pool_name, COUNT(*) AS total, SUM(CASE WHEN claimed_by IS NULL THEN 1 ELSE 0 END) AS available, "
-                "SUM(CASE WHEN claimed_by IS NOT NULL THEN 1 ELSE 0 END) AS used FROM cdk_pool WHERE group_id=? GROUP BY pool_name ORDER BY pool_name ASC",
+                "SELECT pool_name, SUM(CASE WHEN reusable=1 THEN 1 ELSE quantity END) AS total, "
+                "SUM(CASE WHEN reusable=1 THEN 999999999 ELSE quantity - used_count END) AS available, "
+                "SUM(used_count) AS used, MAX(reusable) AS has_reusable FROM cdk_pool WHERE group_id=? GROUP BY pool_name ORDER BY pool_name ASC",
                 (group_id,),
             ).fetchall()
         return [dict(r) for r in rows]
@@ -474,7 +506,9 @@ async def on_reward_help(ctx):
         "- 添加CDK 卡池名 CDK（群内）\n"
         "- 添加CDK 群号 卡池名 CDK（私聊）\n"
         "- 卡池状态 [卡池名]\n"
-        "- 邀请统计 [@QQ/QQ号]"
+        "- 邀请统计 [@QQ/QQ号]\n"
+        "\n"
+        "说明：同一个卡池下，重复添加相同 CDK 会自动累计库存，可重复发放。"
     )
 
 
@@ -689,6 +723,13 @@ add_cdk = CommandPlugin(
 @add_cdk.handle
 async def on_add_cdk(ctx):
     raw = _extract_after_command(ctx, "添加CDK")
+    reusable = False
+    for prefix in ("公共 ", "可重复 ", "无限 "):
+        if raw.startswith(prefix):
+            reusable = True
+            raw = raw[len(prefix):].strip()
+            break
+
     parts = raw.split(maxsplit=2)
     target_group_id: Optional[int] = None
     pool_name = ""
@@ -696,18 +737,26 @@ async def on_add_cdk(ctx):
 
     if ctx.is_group and ctx.group_id is not None:
         if len(parts) < 2:
-            await ctx.reply("用法：添加CDK 卡池名 CDK")
+            await ctx.reply("用法：添加CDK [公共] 卡池名 CDK")
             return
         target_group_id = int(ctx.group_id)
         pool_name = parts[0].strip()
         code = parts[1].strip() if len(parts) == 2 else parts[1].strip() + " " + parts[2].strip()
     else:
         if len(parts) < 3 or not parts[0].isdigit():
-            await ctx.reply("私聊用法：添加CDK 群号 卡池名 CDK")
+            await ctx.reply("私聊用法：添加CDK 群号 [公共] 卡池名 CDK")
             return
         target_group_id = int(parts[0])
-        pool_name = parts[1].strip()
-        code = parts[2].strip()
+        remain = raw[len(parts[0]):].strip()
+        if remain.startswith("公共 ") or remain.startswith("可重复 ") or remain.startswith("无限 "):
+            reusable = True
+            remain = remain.split(maxsplit=1)[1].strip()
+        remain_parts = remain.split(maxsplit=1)
+        if len(remain_parts) < 2:
+            await ctx.reply("私聊用法：添加CDK 群号 [公共] 卡池名 CDK")
+            return
+        pool_name = remain_parts[0].strip()
+        code = remain_parts[1].strip()
 
     if not pool_name or not code:
         await ctx.reply("卡池名和 CDK 不能为空")
@@ -722,11 +771,14 @@ async def on_add_cdk(ctx):
             await ctx.reply("只有机器人主人或该群发卡管理员可以私聊添加 CDK")
             return
 
-    ok = _add_cdk(target_group_id, pool_name, code, ctx.user_id)
+    ok = _add_cdk(target_group_id, pool_name, code, ctx.user_id, reusable=reusable)
     if not ok:
-        await ctx.reply("添加失败，可能是重复 CDK")
+        await ctx.reply("添加失败，请检查参数或稍后重试")
         return
-    await ctx.reply(f"已添加 CDK 到卡池：{pool_name}")
+    if reusable:
+        await ctx.reply(f"已添加公共 CDK 到卡池：{pool_name}\n说明：这张卡添加一次后可重复发放")
+    else:
+        await ctx.reply(f"已添加 CDK 到卡池：{pool_name}\n说明：普通卡密发出一次会消耗一次库存")
 
 
 pool_status = CommandPlugin(
@@ -752,7 +804,10 @@ async def on_pool_status(ctx):
     invite_rules = _list_invite_rules(int(ctx.group_id))
     lines = ["卡池状态"]
     for row in stats:
-        lines.append(f"- {row['pool_name']}：总数 {row['total']}，剩余 {row['available']}，已发 {row['used']}")
+        if int(row.get('has_reusable') or 0) == 1:
+            lines.append(f"- {row['pool_name']}：包含公共卡密，可重复发放，已发 {row['used']}")
+        else:
+            lines.append(f"- {row['pool_name']}：总数 {row['total']}，剩余 {row['available']}，已发 {row['used']}")
     lines.append(f"首日签到奖励：{first_pool or '未设置'}")
     if streak_rules:
         lines.append("连续签到奖励：" + "；".join(f"{days}天→{pool}" for days, pool in streak_rules))

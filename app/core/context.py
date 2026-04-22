@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Dict
 
 from app.adapters.onebot import OneBotAPI
 from app.card_mode import get_card_mode, render_text_to_card_images
+from user_plugins.group_admin import get_auto_recall_seconds
 
 
 @dataclass
@@ -47,7 +49,8 @@ class MessageContext:
             return
 
         if self.message_type == "group" and self.group_id is not None:
-            await self.api.send_group_msg(self.group_id, message)
+            resp = await self.api.send_group_msg(self.group_id, message)
+            await self._maybe_auto_recall(resp)
             return
 
         if self.user_id is not None:
@@ -69,7 +72,8 @@ class MessageContext:
 
     async def reply_image(self, file: str) -> None:
         if self.message_type == "group" and self.group_id is not None:
-            await self.api.send_group_image(self.group_id, file)
+            resp = await self.api.send_group_image(self.group_id, file)
+            await self._maybe_auto_recall(resp)
             return
         if self.user_id is not None:
             await self.api.send_private_image(self.user_id, file)
@@ -79,3 +83,23 @@ class MessageContext:
             {"type": "text", "data": {"text": text}},
             {"type": "image", "data": {"file": file}},
         ])
+
+    async def _maybe_auto_recall(self, resp: dict | None) -> None:
+        seconds = get_auto_recall_seconds(self.group_id)
+        if seconds <= 0:
+            return
+        if not isinstance(resp, dict):
+            return
+        data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
+        message_id = data.get("message_id")
+        if not message_id:
+            return
+
+        async def _recall_later():
+            try:
+                await asyncio.sleep(seconds)
+                await self.api.delete_msg(message_id)
+            except Exception:
+                pass
+
+        asyncio.create_task(_recall_later())
