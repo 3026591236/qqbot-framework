@@ -14,6 +14,7 @@ class MarketPlugin:
     version: str = "0.1.0"
     author: str = "unknown"
     description: str = ""
+    sha256: str = ""  # optional integrity check
 
 
 MARKET = {
@@ -27,12 +28,24 @@ MARKET = {
 }
 
 
+def normalize_market_url(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        return ""
+    # convenience: allow GitHub repo shorthand like "3026591236/qqbot-plugin-market"
+    if url.count("/") == 1 and not url.startswith("http"):
+        owner_repo = url
+        return f"https://raw.githubusercontent.com/{owner_repo}/main/market.json"
+    return url
+
+
 def _remote_market() -> dict[str, MarketPlugin]:
-    if not settings.market_url:
+    market_url = normalize_market_url(settings.market_url)
+    if not market_url:
         return {}
     try:
         with httpx.Client(timeout=10) as client:
-            resp = client.get(settings.market_url)
+            resp = client.get(market_url)
             resp.raise_for_status()
             payload = resp.json()
         result = {}
@@ -43,6 +56,7 @@ def _remote_market() -> dict[str, MarketPlugin]:
                 version=item.get("version", "0.1.0"),
                 author=item.get("author", "unknown"),
                 description=item.get("description", ""),
+                sha256=item.get("sha256", ""),
             )
             result[plugin.name] = plugin
         return result
