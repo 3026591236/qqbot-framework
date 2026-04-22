@@ -14,9 +14,10 @@ except Exception:  # optional plugin hook
     save_pending_invite = None
 
 try:
-    from user_plugins.cdk_rewards import process_invite_reward
+    from user_plugins.cdk_rewards import process_invite_reward, process_random_speaker_message
 except Exception:  # optional plugin hook
     process_invite_reward = None
+    process_random_speaker_message = None
 
 
 class BotApp:
@@ -48,6 +49,11 @@ class BotApp:
             message_type=event.get("message_type", "private"),
             api=self.api,
         )
+        if process_random_speaker_message is not None:
+            try:
+                await process_random_speaker_message(ctx)
+            except Exception:
+                pass
         return await self.router.dispatch(ctx)
 
     async def handle_notice_event(self, event: Dict[str, Any]) -> bool:

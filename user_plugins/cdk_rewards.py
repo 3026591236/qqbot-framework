@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import random
+import time
 from typing import Optional
 
 from app.auth import is_owner
@@ -111,6 +113,40 @@ def _ensure_tables() -> None:
                 invite_count INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT '',
                 PRIMARY KEY (group_id, user_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cdk_random_speaker_settings (
+                group_id INTEGER PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                pool_name TEXT NOT NULL DEFAULT '',
+                interval_seconds INTEGER NOT NULL DEFAULT 600,
+                max_picks_per_hour INTEGER NOT NULL DEFAULT 6,
+                window_seconds INTEGER NOT NULL DEFAULT 3600,
+                updated_at TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cdk_random_speaker_candidates (
+                group_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                seen_at INTEGER NOT NULL,
+                PRIMARY KEY (group_id, user_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cdk_random_speaker_pick_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                picked_at INTEGER NOT NULL,
+                cdk_code TEXT NOT NULL DEFAULT ''
             )
             """
         )
@@ -392,6 +428,193 @@ def _get_invite_count(group_id: int, user_id: int) -> int:
         return int(row["invite_count"]) if row else 0
 
 
+def _ensure_random_speaker_settings(group_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO cdk_random_speaker_settings (group_id, updated_at) VALUES (?, ?)",
+            (group_id, _now()),
+        )
+
+
+def _get_random_speaker_settings(group_id: int) -> dict:
+    _ensure_random_speaker_settings(group_id)
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT enabled, pool_name, interval_seconds, max_picks_per_hour, window_seconds FROM cdk_random_speaker_settings WHERE group_id=?",
+            (group_id,),
+        ).fetchone()
+        if row is None:
+            return {"enabled": 0, "pool_name": "", "interval_seconds": 600, "max_picks_per_hour": 6, "window_seconds": 3600}
+        return {
+            "enabled": int(row["enabled"] or 0),
+            "pool_name": str(row["pool_name"] or ""),
+            "interval_seconds": int(row["interval_seconds"] or 600),
+            "max_picks_per_hour": int(row["max_picks_per_hour"] or 6),
+            "window_seconds": int(row["window_seconds"] or 3600),
+        }
+
+
+def _set_random_speaker_settings(
+    group_id: int,
+    *,
+    enabled: int | None = None,
+    pool_name: str | None = None,
+    interval_seconds: int | None = None,
+    max_picks_per_hour: int | None = None,
+    window_seconds: int | None = None,
+) -> None:
+    _ensure_random_speaker_settings(group_id)
+    fields: list[str] = []
+    params: list[object] = []
+    if enabled is not None:
+        fields.append("enabled=?")
+        params.append(int(enabled))
+    if pool_name is not None:
+        fields.append("pool_name=?")
+        params.append(str(pool_name))
+    if interval_seconds is not None:
+        fields.append("interval_seconds=?")
+        params.append(max(60, int(interval_seconds)))
+    if max_picks_per_hour is not None:
+        fields.append("max_picks_per_hour=?")
+        params.append(max(1, int(max_picks_per_hour)))
+    if window_seconds is not None:
+        fields.append("window_seconds=?")
+        params.append(max(300, int(window_seconds)))
+    fields.append("updated_at=?")
+    params.append(_now())
+    params.append(group_id)
+    with get_conn() as conn:
+        conn.execute(
+            f"UPDATE cdk_random_speaker_settings SET {', '.join(fields)} WHERE group_id=?",
+            tuple(params),
+        )
+
+
+def _record_random_speaker_candidate(group_id: int, user_id: int, seen_at: int) -> None:
+    if user_id <= 0:
+        return
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO cdk_random_speaker_candidates (group_id, user_id, seen_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(group_id, user_id) DO UPDATE SET seen_at=excluded.seen_at",
+            (group_id, user_id, seen_at),
+        )
+
+
+def _pick_random_candidate(group_id: int, now_ts: int, window_seconds: int) -> int | None:
+    cutoff = now_ts - window_seconds
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM cdk_random_speaker_candidates WHERE group_id=? AND seen_at < ?",
+            (group_id, cutoff),
+        )
+        rows = conn.execute(
+            "SELECT user_id FROM cdk_random_speaker_candidates WHERE group_id=? AND seen_at >= ?",
+            (group_id, cutoff),
+        ).fetchall()
+    users = [int(r["user_id"]) for r in rows]
+    if not users:
+        return None
+    return random.choice(users)
+
+
+def _get_random_pick_stats(group_id: int, now_ts: int, window_seconds: int) -> tuple[int, int | None]:
+    cutoff = now_ts - window_seconds
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt, MAX(picked_at) AS last_pick FROM cdk_random_speaker_pick_logs WHERE group_id=? AND picked_at >= ?",
+            (group_id, cutoff),
+        ).fetchone()
+        return int(row["cnt"] or 0), (int(row["last_pick"]) if row["last_pick"] is not None else None)
+
+
+def _insert_random_pick_log(group_id: int, user_id: int, now_ts: int, cdk_code: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO cdk_random_speaker_pick_logs (group_id, user_id, picked_at, cdk_code) VALUES (?, ?, ?, ?)",
+            (group_id, user_id, now_ts, cdk_code),
+        )
+
+
+def _list_enabled_random_speaker_groups() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT group_id, enabled, pool_name, interval_seconds, max_picks_per_hour, window_seconds FROM cdk_random_speaker_settings WHERE enabled=1"
+        ).fetchall()
+    return [
+        {
+            "group_id": int(r["group_id"]),
+            "enabled": int(r["enabled"] or 0),
+            "pool_name": str(r["pool_name"] or ""),
+            "interval_seconds": int(r["interval_seconds"] or 600),
+            "max_picks_per_hour": int(r["max_picks_per_hour"] or 6),
+            "window_seconds": int(r["window_seconds"] or 3600),
+        }
+        for r in rows
+    ]
+
+
+def _groups_with_due_random_pick(now_ts: int) -> list[dict]:
+    groups = _list_enabled_random_speaker_groups()
+    due: list[dict] = []
+    for g in groups:
+        if not g["pool_name"]:
+            continue
+        cnt, last_pick = _get_random_pick_stats(g["group_id"], now_ts, g["window_seconds"])
+        if cnt >= g["max_picks_per_hour"]:
+            continue
+        if last_pick is not None and now_ts - last_pick < g["interval_seconds"]:
+            continue
+        due.append(g)
+    return due
+
+
+async def process_random_speaker_message(ctx) -> None:
+    if not ctx.is_group or ctx.group_id is None or ctx.user_id is None:
+        return
+    text = (ctx.text or "").strip()
+    if not text:
+        return
+    settings = _get_random_speaker_settings(int(ctx.group_id))
+    if int(settings.get("enabled") or 0) != 1:
+        return
+    _record_random_speaker_candidate(int(ctx.group_id), int(ctx.user_id), int(time.time()))
+
+
+async def process_random_speaker_tick(api) -> None:
+    now_ts = int(time.time())
+    for g in _groups_with_due_random_pick(now_ts):
+        group_id = int(g["group_id"])
+        window_seconds = int(g["window_seconds"])
+        pool_name = str(g["pool_name"])
+
+        uid = _pick_random_candidate(group_id, now_ts, window_seconds)
+        if uid is None:
+            continue
+
+        # unique per hour rule: one user at most once in current window
+        with get_conn() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM cdk_random_speaker_pick_logs WHERE group_id=? AND user_id=? AND picked_at >= ? LIMIT 1",
+                (group_id, uid, now_ts - window_seconds),
+            ).fetchone()
+            if exists is not None:
+                continue
+
+        cdk = _claim_cdk(group_id, pool_name, uid, "random_speaker", str(now_ts // window_seconds))
+        if cdk in (None, ""):
+            continue
+        try:
+            try:
+                await api.send_temp_msg(group_id, uid, f"随机发言奖励已发放\n群号：{group_id}\nCDK：{cdk}")
+            except Exception:
+                await api.send_private_msg(uid, f"随机发言奖励已发放\n群号：{group_id}\nCDK：{cdk}")
+            _insert_random_pick_log(group_id, uid, now_ts, cdk)
+        except Exception:
+            continue
+
+
 # =========================
 # reward hooks
 # =========================
@@ -529,6 +752,9 @@ async def on_reward_help(ctx):
         "- 添加CDK 群号 卡池名 CDK（私聊）\n"
         "- 卡池状态 [卡池名]\n"
         "- 邀请统计 [@QQ/QQ号]\n"
+        "- 开启随机发言发卡 卡池名 [每几分钟一次，默认10]\n"
+        "- 关闭随机发言发卡\n"
+        "- 随机发言发卡状态\n"
         "\n"
         "说明：同一个卡池下，重复添加相同 CDK 会自动累计库存，可重复发放。"
     )
@@ -861,3 +1087,90 @@ async def on_invite_stats(ctx):
         return
     count = _get_invite_count(int(ctx.group_id), int(target))
     await ctx.reply(f"用户 {target} 当前有效邀请人数：{count}")
+
+
+random_speaker_enable = CommandPlugin(
+    name="random_speaker_enable",
+    command="开启随机发言发卡",
+    description="enable random speaker cdk reward",
+    meta=PluginMeta(name="random_speaker_enable", version="1.0.0", author="OpenClaw", description="开启随机发言发卡"),
+)
+
+
+@random_speaker_enable.handle
+async def on_random_speaker_enable(ctx):
+    if not ctx.is_group or ctx.group_id is None:
+        await ctx.reply("请在群里使用这个命令")
+        return
+    if not (_is_group_admin(ctx) or _is_reward_admin_for_group(int(ctx.group_id), ctx.user_id)):
+        await ctx.reply("只有群管理员、机器人主人或发卡管理员可以设置")
+        return
+
+    arg = _extract_after_command(ctx, "开启随机发言发卡").strip()
+    if not arg:
+        await ctx.reply("用法：开启随机发言发卡 卡池名 [每几分钟一次，默认10]")
+        return
+    parts = arg.split()
+    pool_name = parts[0].strip()
+    interval_seconds = 600
+    if len(parts) >= 2 and parts[1].isdigit():
+        interval_seconds = max(60, int(parts[1]) * 60)
+
+    _set_random_speaker_settings(
+        int(ctx.group_id),
+        enabled=1,
+        pool_name=pool_name,
+        interval_seconds=interval_seconds,
+        max_picks_per_hour=6,
+        window_seconds=3600,
+    )
+    await ctx.reply(
+        f"已开启随机发言发卡\n卡池：{pool_name}\n频率：约每 {interval_seconds // 60} 分钟一次\n规则：1小时最多抽6人；无人发言则不发"
+    )
+
+
+random_speaker_disable = CommandPlugin(
+    name="random_speaker_disable",
+    command="关闭随机发言发卡",
+    description="disable random speaker cdk reward",
+    meta=PluginMeta(name="random_speaker_disable", version="1.0.0", author="OpenClaw", description="关闭随机发言发卡"),
+)
+
+
+@random_speaker_disable.handle
+async def on_random_speaker_disable(ctx):
+    if not ctx.is_group or ctx.group_id is None:
+        await ctx.reply("请在群里使用这个命令")
+        return
+    if not (_is_group_admin(ctx) or _is_reward_admin_for_group(int(ctx.group_id), ctx.user_id)):
+        await ctx.reply("只有群管理员、机器人主人或发卡管理员可以设置")
+        return
+    _set_random_speaker_settings(int(ctx.group_id), enabled=0)
+    await ctx.reply("已关闭随机发言发卡")
+
+
+random_speaker_status = CommandPlugin(
+    name="random_speaker_status",
+    command="随机发言发卡状态",
+    description="show random speaker cdk status",
+    meta=PluginMeta(name="random_speaker_status", version="1.0.0", author="OpenClaw", description="随机发言发卡状态"),
+)
+
+
+@random_speaker_status.handle
+async def on_random_speaker_status(ctx):
+    if not ctx.is_group or ctx.group_id is None:
+        await ctx.reply("请在群里使用这个命令")
+        return
+    cfg = _get_random_speaker_settings(int(ctx.group_id))
+    now_ts = int(time.time())
+    cnt, last_pick = _get_random_pick_stats(int(ctx.group_id), now_ts, int(cfg.get("window_seconds") or 3600))
+    await ctx.reply(
+        "随机发言发卡状态\n"
+        f"启用：{'是' if int(cfg.get('enabled') or 0) == 1 else '否'}\n"
+        f"卡池：{cfg.get('pool_name') or '未设置'}\n"
+        f"间隔：约 {int(cfg.get('interval_seconds') or 600) // 60} 分钟\n"
+        f"每小时上限：{int(cfg.get('max_picks_per_hour') or 6)}\n"
+        f"本小时已发：{cnt}\n"
+        f"上次发放：{datetime.utcfromtimestamp(last_pick).isoformat(timespec='seconds') if last_pick else '-'}"
+    )

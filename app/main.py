@@ -19,6 +19,11 @@ try:
 except Exception:  # optional plugin hook
     auto_update_notifier = None
 
+try:
+    from user_plugins.cdk_rewards import process_random_speaker_tick
+except Exception:  # optional plugin hook
+    process_random_speaker_tick = None
+
 setup_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,18 @@ async def startup_event() -> None:
     if auto_update_notifier is not None:
         asyncio.create_task(auto_update_notifier(bot.api))
         logger.info("auto update notifier started")
+
+    if process_random_speaker_tick is not None:
+        async def _random_speaker_loop() -> None:
+            while True:
+                try:
+                    await process_random_speaker_tick(bot.api)
+                except Exception:
+                    logger.exception("random speaker tick failed")
+                await asyncio.sleep(60)
+
+        asyncio.create_task(_random_speaker_loop())
+        logger.info("random speaker tick loop started")
 
 
 @app.get("/")
