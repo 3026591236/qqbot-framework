@@ -20,7 +20,7 @@ except Exception:  # optional plugin hook
 
 
 class BotApp:
-    def __init__(self, api_base: str = "http://127.0.0.1:5700") -> None:
+    def __init__(self, api_base: str = "http://127.0.0.1:5700", adapter_name: str = "onebot") -> None:
         self.api = OneBotAPI(api_base)
         self.router = Router()
 
