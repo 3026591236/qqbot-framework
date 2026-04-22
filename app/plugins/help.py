@@ -11,7 +11,8 @@ def _menu_text() -> str:
         "│                              │\n"
         "│  ◇ 进阶功能                  │\n"
         "│ 〔群管菜单〕 〔卡片菜单〕     │\n"
-        "│ 〔语录菜单〕 〔龙虾菜单〕     │\n"
+        "│ 〔发卡菜单〕 〔语录菜单〕     │\n"
+        "│ 〔龙虾菜单〕                 │\n"
         "│                              │\n"
         "│  ◇ 快捷入口                  │\n"
         "│  菜单   help   ping          │\n"
@@ -91,6 +92,7 @@ async def on_checkin_menu(ctx):
         "- 补签：补昨天漏掉的签到\n"
         "- 签到排行 [数量]：查看签到/积分排行\n"
         "- 积分：查看自己的积分信息\n"
+        "- 发卡菜单：查看签到奖励/CDK/邀请奖励相关命令\n"
         "\n"
         "示例：\n"
         "- 签到\n"
@@ -226,6 +228,36 @@ async def on_card_menu(ctx):
         "- 切换卡片模式 文字/图片\n"
         "\n"
         "说明：当前 QQ 链路下官方 JSON/XML 卡片不稳定，推荐优先用全局文字卡或全局图片卡。"
+    )
+
+
+reward_menu = CommandPlugin(
+    name="reward_menu",
+    command="发卡菜单",
+    description="show cdk reward commands",
+    meta=PluginMeta(name="reward_menu", version="1.0.0", author="OpenClaw", description="show cdk reward commands"),
+)
+
+
+@reward_menu.handle
+async def on_reward_menu(ctx):
+    await ctx.reply(
+        "发卡奖励功能\n"
+        "- 发卡帮助\n"
+        "- 设置发卡管理员 @某人/QQ号\n"
+        "- 删除发卡管理员 @某人/QQ号\n"
+        "- 发卡管理员列表\n"
+        "- 设置签到首日奖励 卡池名/关闭\n"
+        "- 设置连续签到奖励 天数 卡池名\n"
+        "- 删除连续签到奖励 天数\n"
+        "- 设置邀请奖励 人数 卡池名\n"
+        "- 删除邀请奖励 人数\n"
+        "- 添加CDK 卡池名 CDK（群内）\n"
+        "- 添加CDK 群号 卡池名 CDK（私聊）\n"
+        "- 卡池状态 [卡池名]\n"
+        "- 邀请统计 [@某人/QQ号]\n"
+        "\n"
+        "说明：签到奖励会群内提示、CDK 私聊发放；同一奖励规则会自动防重复发放。"
     )
 
 
