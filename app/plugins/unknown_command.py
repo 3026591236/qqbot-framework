@@ -26,6 +26,11 @@ KNOWN_PREFIXES = [
     "添加CDK",
     "卡池状态",
     "邀请统计",
+    "开启自动撤回",
+    "开始自动撤回",
+    "关闭自动撤回",
+    "停止自动撤回",
+    "自动撤回状态",
     "语录菜单",
     "龙虾菜单",
     "ping",
@@ -93,6 +98,11 @@ class UnknownCommandHintPlugin:
             or text.startswith("积分")
             or text.startswith("卡片")
             or text.startswith("发卡")
+            or text.startswith("开启自动撤回")
+            or text.startswith("开始自动撤回")
+            or text.startswith("关闭自动撤回")
+            or text.startswith("停止自动撤回")
+            or text.startswith("自动撤回")
             or text.startswith("发")
             or text.startswith("AI")
             or text.startswith("问AI")

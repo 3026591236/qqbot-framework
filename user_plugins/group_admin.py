@@ -4,7 +4,7 @@ from datetime import datetime
 
 from app.auth import is_owner
 from app.core.plugin import CommandPlugin, PluginMeta
-from app.db import get_conn
+from app.db import _ensure_column, get_conn
 
 plugin = None
 
@@ -54,6 +54,8 @@ def _ensure_tables() -> None:
             )
             """
         )
+        _ensure_column(conn, "group_admin_settings", "auto_recall_enabled", "auto_recall_enabled INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "group_admin_settings", "auto_recall_seconds", "auto_recall_seconds INTEGER NOT NULL DEFAULT 0")
 
 
 _ensure_tables()
@@ -371,18 +373,24 @@ enable_auto_recall = CommandPlugin(
     meta=PluginMeta(name="enable_auto_recall", version="2.1.0", author="OpenClaw", description="开启自动撤回"),
 )
 
+start_auto_recall = CommandPlugin(
+    name="start_auto_recall",
+    command="开始自动撤回",
+    description="alias for enable auto recall",
+    meta=PluginMeta(name="start_auto_recall", version="2.1.0", author="OpenClaw", description="开始自动撤回"),
+)
 
-@enable_auto_recall.handle
-async def on_enable_auto_recall(ctx):
+
+async def _handle_enable_auto_recall(ctx, command_text: str) -> None:
     if not _ensure_group(ctx):
         await ctx.reply("这个命令只能在群里用")
         return
     if not _is_group_admin(ctx):
         await ctx.reply("你没有群管权限")
         return
-    arg = _extract_after_command(ctx, "开启自动撤回").strip()
+    arg = _extract_after_command(ctx, command_text).strip()
     if not arg.isdigit():
-        await ctx.reply("用法：开启自动撤回 秒数")
+        await ctx.reply("用法：开启自动撤回 秒数\n或：开始自动撤回 秒数")
         return
     seconds = int(arg)
     if seconds <= 0:
@@ -393,6 +401,16 @@ async def on_enable_auto_recall(ctx):
     await ctx.reply(f"已开启本群自动撤回\n撤回时间：{seconds} 秒")
 
 
+@enable_auto_recall.handle
+async def on_enable_auto_recall(ctx):
+    await _handle_enable_auto_recall(ctx, "开启自动撤回")
+
+
+@start_auto_recall.handle
+async def on_start_auto_recall(ctx):
+    await _handle_enable_auto_recall(ctx, "开始自动撤回")
+
+
 disable_auto_recall = CommandPlugin(
     name="disable_auto_recall",
     command="关闭自动撤回",
@@ -400,9 +418,15 @@ disable_auto_recall = CommandPlugin(
     meta=PluginMeta(name="disable_auto_recall", version="2.1.0", author="OpenClaw", description="关闭自动撤回"),
 )
 
+stop_auto_recall = CommandPlugin(
+    name="stop_auto_recall",
+    command="停止自动撤回",
+    description="alias for disable auto recall",
+    meta=PluginMeta(name="stop_auto_recall", version="2.1.0", author="OpenClaw", description="停止自动撤回"),
+)
 
-@disable_auto_recall.handle
-async def on_disable_auto_recall(ctx):
+
+async def _handle_disable_auto_recall(ctx) -> None:
     if not _ensure_group(ctx):
         await ctx.reply("这个命令只能在群里用")
         return
@@ -412,6 +436,16 @@ async def on_disable_auto_recall(ctx):
     _update_setting(int(ctx.group_id), "auto_recall_enabled", 0)
     _update_setting(int(ctx.group_id), "auto_recall_seconds", 0)
     await ctx.reply("已关闭本群自动撤回")
+
+
+@disable_auto_recall.handle
+async def on_disable_auto_recall(ctx):
+    await _handle_disable_auto_recall(ctx)
+
+
+@stop_auto_recall.handle
+async def on_stop_auto_recall(ctx):
+    await _handle_disable_auto_recall(ctx)
 
 
 recall_msg = CommandPlugin(
