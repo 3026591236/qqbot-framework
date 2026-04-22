@@ -440,6 +440,10 @@ QQBOT_DATA_DIR=./data
 QQBOT_SQLITE_PATH=./data/qqbot.sqlite3
 QQBOT_OWNER_IDS=$OWNER_QQ
 QQBOT_MARKET_URL=
+QQBOT_PUBLIC_BASE_URL=http://host.docker.internal:$APP_PORT
+QQBOT_CARD_MODE=text
+QQBOT_AUTO_NOTIFY_GROUP_INVITE=true
+QQBOT_PANEL_PASSWORD=$PANEL_PASSWORD
 EOF
   ok ".env 已生成：$ENV_FILE"
 }
@@ -752,6 +756,8 @@ ONEBOT_PORT=$(ensure_free_port "NapCat OneBot API 端口" "3000")
 NAPCAT_WEBUI_PORT=$(ensure_free_port "NapCat WebUI 端口" "6099")
 NAPCAT_ACCOUNT=$(trim "$(ask "NapCat 登录 QQ 号（默认同主人QQ）" "$OWNER_QQ")")
 [ -n "$NAPCAT_ACCOUNT" ] || NAPCAT_ACCOUNT="$OWNER_QQ"
+PANEL_PASSWORD=$(trim "$(ask "控制面板口令（留空则自动生成）" "WwbvdOD_OlVLa3Bs0S2ITlMC")")
+[ -n "$PANEL_PASSWORD" ] || PANEL_PASSWORD="WwbvdOD_OlVLa3Bs0S2ITlMC"
 choose_login_mode
 
 copy_project

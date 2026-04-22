@@ -197,6 +197,7 @@ QQBOT_OWNER_IDS=你的QQ号
 
 - `deploy/NAPCAT_DEPLOY.md`
 - `docs/DEPLOY_GUIDE.md`
+- `docs/PANEL_DEPLOY_GUIDE.md`
 
 当前推荐实际对接关系：
 
@@ -204,7 +205,29 @@ QQBOT_OWNER_IDS=你的QQ号
 - 框架服务：`http://127.0.0.1:9000`
 - NapCat 上报：`http://host.docker.internal:9000/onebot/event`
 
-## 8. AI 中转站使用教程
+## 8. Web 控制面板
+
+当前项目已内置一个 Web 控制面板，默认挂载在主服务下：
+
+```text
+http://127.0.0.1:9000/panel
+```
+
+面板当前支持：
+
+- 登录认证
+- 状态总览
+- NapCat / OneBot 状态查看
+- 登录二维码查看
+- 全局 / 按群卡片模式管理
+- 群自动撤回管理
+- 运行日志查看
+
+部署与使用说明请看：
+
+- `docs/PANEL_DEPLOY_GUIDE.md`
+
+## 9. AI 中转站使用教程
 
 AI 插件支持使用 OpenAI 兼容接口的中转站，并且可以直接在 QQ 私聊中完成配置，不需要手动改 `.env`。
 
