@@ -805,10 +805,7 @@ async function login(){
       document.getElementById('sendResult').innerText = JSON.stringify(data, null, 2);
     }
     function badge(label, ok) {
-      return `<span class="badge ${ok ? 'ok' : 'bad'}">${ok ? '✅' : '❌'} ${label}</span>`;
-    }
-    function esc(s) {
-      return (s || '').toString().replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m] || m));
+      return `<span class="badge ${ok ? 'ok' : 'bad'}">${ok ? 'OK' : 'FAIL'} ${label}</span>`;
     }
 
     async function loadPlugins() {
@@ -826,7 +823,7 @@ async function login(){
       });
       document.getElementById('plugins').innerText = JSON.stringify(simple, null, 2);
 
-      // human list
+      // human list (no inline onclick to avoid escaping issues)
       const box = document.getElementById('pluginsList');
       box.innerHTML = '';
       for (const n of names) {
@@ -835,17 +832,31 @@ async function login(){
         const version = p.version || '';
         const trigger = p.trigger || '';
         const desc = `v${version || '?'}${trigger ? ' · ' + trigger : ''}`;
+
         const el = document.createElement('div');
         el.className = 'item';
-        el.innerHTML = `
-          <div class="meta">
-            <div class="name">${esc(n)}</div>
-            <div class="desc">${esc(desc)}</div>
-          </div>
-          <div class="actions">
-            <button class="${enabled ? 'secondary' : ''}" onclick="setPluginEnabled('${esc(n)}', ${enabled ? 'false' : 'true'})">${enabled ? '禁用' : '启用'}</button>
-          </div>
-        `;
+
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        const nm = document.createElement('div');
+        nm.className = 'name';
+        nm.textContent = n;
+        const ds = document.createElement('div');
+        ds.className = 'desc';
+        ds.textContent = desc;
+        meta.appendChild(nm);
+        meta.appendChild(ds);
+
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+        const btn = document.createElement('button');
+        if (enabled) btn.className = 'secondary';
+        btn.textContent = enabled ? '禁用' : '启用';
+        btn.addEventListener('click', () => setPluginEnabled(n, !enabled));
+        actions.appendChild(btn);
+
+        el.appendChild(meta);
+        el.appendChild(actions);
         box.appendChild(el);
       }
     }
@@ -887,7 +898,7 @@ async function login(){
       const lastHit = hits.length ? hits[hits.length-1] : '';
       if (lastHit) tips.push('最近日志线索：' + lastHit.slice(0, 180));
       if (!tips.length) tips.push('看起来一切正常。');
-      document.getElementById('selfcheckSummary').innerText = tips.join('\n');
+      document.getElementById('selfcheckSummary').innerText = tips.join('\\n');
     }
     async function createBackup() {
       const include_sqlite = document.getElementById('backupIncludeSqlite').value === 'true';
