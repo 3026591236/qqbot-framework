@@ -25,6 +25,11 @@ except Exception:  # optional plugin hook
     process_random_speaker_tick = None
 
 try:
+    from user_plugins.group_message_stats import process_group_message_reward_tick
+except Exception:  # optional plugin hook
+    process_group_message_reward_tick = None
+
+try:
     from app.napcat_watchdog import napcat_watchdog_loop
 except Exception:  # optional watchdog hook
     napcat_watchdog_loop = None
@@ -61,6 +66,18 @@ async def startup_event() -> None:
 
         asyncio.create_task(_random_speaker_loop())
         logger.info("random speaker tick loop started")
+
+    if process_group_message_reward_tick is not None:
+        async def _group_message_reward_loop() -> None:
+            while True:
+                try:
+                    await process_group_message_reward_tick(bot.api)
+                except Exception:
+                    logger.exception("group message reward tick failed")
+                await asyncio.sleep(60)
+
+        asyncio.create_task(_group_message_reward_loop())
+        logger.info("group message reward tick loop started")
 
     if napcat_watchdog_loop is not None:
         asyncio.create_task(napcat_watchdog_loop(bot.api))
