@@ -43,6 +43,11 @@ class Settings:
     # Optional: restrict who can access /panel by client IP.
     # Example: "1.2.3.4,5.6.7.8" (empty means allow all)
     panel_allow_ips: tuple[str, ...] = tuple(filter(None, os.getenv("QQBOT_PANEL_ALLOW_IPS", "").split(",")))
+    napcat_watchdog_enabled: bool = os.getenv("QQBOT_NAPCAT_WATCHDOG_ENABLED", "true").lower() == "true"
+    napcat_watchdog_interval_seconds: int = int(os.getenv("QQBOT_NAPCAT_WATCHDOG_INTERVAL_SECONDS", "120"))
+    napcat_watchdog_restart_cooldown_seconds: int = int(os.getenv("QQBOT_NAPCAT_WATCHDOG_RESTART_COOLDOWN_SECONDS", "900"))
+    napcat_watchdog_notify_owner: bool = os.getenv("QQBOT_NAPCAT_WATCHDOG_NOTIFY_OWNER", "true").lower() == "true"
+    napcat_container_name: str = os.getenv("QQBOT_NAPCAT_CONTAINER_NAME", "napcat")
 
 
 settings = Settings()

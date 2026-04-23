@@ -24,6 +24,11 @@ try:
 except Exception:  # optional plugin hook
     process_random_speaker_tick = None
 
+try:
+    from app.napcat_watchdog import napcat_watchdog_loop
+except Exception:  # optional watchdog hook
+    napcat_watchdog_loop = None
+
 setup_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,10 @@ async def startup_event() -> None:
 
         asyncio.create_task(_random_speaker_loop())
         logger.info("random speaker tick loop started")
+
+    if napcat_watchdog_loop is not None:
+        asyncio.create_task(napcat_watchdog_loop(bot.api))
+        logger.info("napcat watchdog loop started")
 
 
 @app.get("/")
