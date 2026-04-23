@@ -715,6 +715,8 @@ print_summary() {
   echo "框架端口      : $APP_PORT"
   echo "OneBot端口    : $ONEBOT_PORT"
   echo "NapCat WebUI  : $NAPCAT_WEBUI_PORT"
+  echo "控制面板      : http://127.0.0.1:$APP_PORT/panel"
+  echo "面板口令      : $PANEL_PASSWORD"
   echo "Python解释器  : $PYTHON_BIN"
   echo
   echo "关键文件："
@@ -726,6 +728,7 @@ print_summary() {
   echo "- 框架健康检查 : curl http://127.0.0.1:$APP_PORT/healthz"
   echo "- NapCat状态   : curl -X POST http://127.0.0.1:$ONEBOT_PORT/get_status"
   echo "- NapCat WebUI : http://127.0.0.1:$NAPCAT_WEBUI_PORT/webui"
+  echo "- 控制面板     : http://127.0.0.1:$APP_PORT/panel"
   echo
   echo "文档入口："
   echo "- $APP_DIR/README.md"
@@ -733,6 +736,76 @@ print_summary() {
   echo "- $APP_DIR/deploy/NAPCAT_DEPLOY.md"
   echo "- $APP_DIR/docs/PLUGIN_GUIDE.md"
   echo "=========================================="
+}
+
+post_install_interaction() {
+  echo
+  echo "接下来你可以继续做这些事："
+  echo "  1) 查看框架健康状态"
+  echo "  2) 查看 NapCat / OneBot 状态"
+  echo "  3) 查看最近 NapCat 日志"
+  echo "  4) 再次打印控制面板 / WebUI 登录信息"
+  echo "  5) 查看 systemd 服务状态（如果已安装）"
+  echo "  6) 结束"
+  echo
+
+  while :; do
+    choice=$(ask "请选择下一步操作" "6")
+    case "$choice" in
+      1)
+        echo
+        echo "[框架健康检查]"
+        if need_cmd curl; then
+          curl -fsS "http://127.0.0.1:$APP_PORT/healthz" || true
+          echo
+        else
+          warn "未检测到 curl，无法直接执行健康检查"
+        fi
+        ;;
+      2)
+        echo
+        echo "[NapCat / OneBot 状态]"
+        if need_cmd curl; then
+          curl -fsS -X POST "http://127.0.0.1:$ONEBOT_PORT/get_status" || true
+          echo
+        else
+          warn "未检测到 curl，无法直接检查 NapCat 状态"
+        fi
+        ;;
+      3)
+        echo
+        echo "[最近 NapCat 日志]"
+        if need_cmd docker; then
+          docker logs --tail 80 napcat 2>/dev/null || warn "未找到 napcat 容器或日志不可读"
+        else
+          warn "未检测到 docker，无法读取 NapCat 容器日志"
+        fi
+        echo
+        ;;
+      4)
+        echo
+        show_login_hint
+        print_summary
+        ;;
+      5)
+        echo
+        echo "[systemd 服务状态]"
+        if need_cmd systemctl; then
+          systemctl --no-pager --full status qqbot-framework 2>/dev/null || warn "qqbot-framework systemd 服务不存在或无法读取"
+        else
+          warn "未检测到 systemctl"
+        fi
+        echo
+        ;;
+      6|'')
+        ok "安装后交互结束，后续可随时重新查看 README 或控制面板。"
+        return 0
+        ;;
+      *)
+        warn "请输入 1-6 之间的编号"
+        ;;
+    esac
+  done
 }
 
 info "启动 QQ Bot Framework 安装器"
@@ -803,3 +876,4 @@ fi
 
 show_login_hint
 print_summary
+post_install_interaction
