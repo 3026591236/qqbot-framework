@@ -26,6 +26,7 @@ KNOWN_PREFIXES = [
     "添加CDK",
     "卡池状态",
     "邀请统计",
+    "今日水群前三",
     "开启自动撤回",
     "开始自动撤回",
     "关闭自动撤回",
@@ -99,6 +100,7 @@ class UnknownCommandHintPlugin:
             or text.startswith("群管")
             or text.startswith("签到")
             or text.startswith("积分")
+            or text.startswith("今日水群")
             or text.startswith("卡片")
             or text.startswith("发卡")
             or text.startswith("开启自动撤回")
@@ -149,7 +151,7 @@ class UnknownCommandHintPlugin:
         await ctx.reply(
             "这个命令我没认出来。\n"
             "你可以直接发：菜单\n"
-            "常用命令：ping、签到、积分、AI帮助、插件列表、群管帮助"
+            "常用命令：ping、签到、积分、今日水群前三、AI帮助、插件列表、群管帮助"
         )
         return True
 

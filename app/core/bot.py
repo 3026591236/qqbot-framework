@@ -19,6 +19,11 @@ except Exception:  # optional plugin hook
     process_invite_reward = None
     process_random_speaker_message = None
 
+try:
+    from user_plugins.group_message_stats import process_group_message_stats
+except Exception:  # optional plugin hook
+    process_group_message_stats = None
+
 
 class BotApp:
     def __init__(self, api_base: str = "http://127.0.0.1:5700", adapter_name: str = "onebot") -> None:
@@ -52,6 +57,11 @@ class BotApp:
         if process_random_speaker_message is not None:
             try:
                 await process_random_speaker_message(ctx)
+            except Exception:
+                pass
+        if process_group_message_stats is not None:
+            try:
+                await process_group_message_stats(ctx)
             except Exception:
                 pass
         return await self.router.dispatch(ctx)
