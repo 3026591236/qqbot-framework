@@ -746,11 +746,13 @@ post_install_interaction() {
   echo "  3) 查看最近 NapCat 日志"
   echo "  4) 再次打印控制面板 / WebUI 登录信息"
   echo "  5) 查看 systemd 服务状态（如果已安装）"
-  echo "  6) 结束"
+  echo "  6) 导出最新二维码到本机文件"
+  echo "  7) 测试给主人发送一条私聊消息"
+  echo "  8) 结束"
   echo
 
   while :; do
-    choice=$(ask "请选择下一步操作" "6")
+    choice=$(ask "请选择下一步操作" "8")
     case "$choice" in
       1)
         echo
@@ -797,12 +799,44 @@ post_install_interaction() {
         fi
         echo
         ;;
-      6|'')
+      6)
+        echo
+        echo "[导出最新二维码]"
+        if need_cmd docker; then
+          QR_OUT="$APP_DIR/napcat/qrcode-latest.png"
+          mkdir -p "$APP_DIR/napcat"
+          if docker cp napcat:/app/napcat/cache/qrcode.png "$QR_OUT" 2>/dev/null; then
+            ok "二维码已导出：$QR_OUT"
+          else
+            warn "暂时无法导出二维码。可能 NapCat 还没生成二维码，或当前登录流程走的是验证码验证。"
+          fi
+        else
+          warn "未检测到 docker，无法从 NapCat 容器导出二维码"
+        fi
+        echo
+        ;;
+      7)
+        echo
+        echo "[给主人发送测试消息]"
+        if need_cmd curl; then
+          payload=$(cat <<EOF
+{"user_id": $OWNER_QQ, "message": "qqbot-framework 安装完成测试消息"}
+EOF
+)
+          curl -fsS -H 'Content-Type: application/json' -X POST "http://127.0.0.1:$ONEBOT_PORT/send_private_msg" -d "$payload" || true
+          echo
+          echo "如果返回 retcode=0，说明测试消息已发出。"
+        else
+          warn "未检测到 curl，无法发送测试消息"
+        fi
+        echo
+        ;;
+      8|'')
         ok "安装后交互结束，后续可随时重新查看 README 或控制面板。"
         return 0
         ;;
       *)
-        warn "请输入 1-6 之间的编号"
+        warn "请输入 1-8 之间的编号"
         ;;
     esac
   done
