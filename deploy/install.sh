@@ -132,6 +132,46 @@ port_in_use() {
   return 1
 }
 
+print_access_urls() {
+  label=$1
+  port=$2
+  path=${3:-}
+  echo "$label 本机地址 : http://127.0.0.1:$port$path"
+  for ip in $(hostname -I 2>/dev/null || true); do
+    [ -n "$ip" ] || continue
+    echo "$label 外部地址 : http://$ip:$port$path"
+  done
+}
+
+latest_proof_url() {
+  if ! need_cmd docker; then
+    return 0
+  fi
+  docker logs --tail 200 napcat 2>&1 | \
+    sed -n 's/.*\(https:\/\/ti\.qq\.com\/safe\/tools\/captcha\/sms-verify-login[^[:space:]]*\).*/\1/p' | tail -n 1
+}
+
+show_login_runtime_state() {
+  if ! need_cmd docker; then
+    return 0
+  fi
+
+  proof_url=$(latest_proof_url || true)
+  if [ -n "$proof_url" ]; then
+    echo "当前登录状态 : 需要验证码验证"
+    echo "验证码链接   : $proof_url"
+    return 0
+  fi
+
+  if docker exec napcat sh -lc 'test -f /app/napcat/cache/qrcode.png' >/dev/null 2>&1; then
+    echo "当前登录状态 : 可尝试扫码登录（已检测到二维码文件）"
+    echo "二维码文件   : /app/napcat/cache/qrcode.png"
+    return 0
+  fi
+
+  echo "当前登录状态 : 未检测到验证码链接或二维码文件，请查看 NapCat 日志"
+}
+
 ensure_free_port() {
   name=$1
   default_port=$2
@@ -602,11 +642,8 @@ show_napcat_runtime_hint() {
   fi
   echo
   echo "================ NapCat 登录入口 ================"
-  echo "WebUI 本机地址 : http://127.0.0.1:$NAPCAT_WEBUI_PORT/webui"
-  for ip in $(hostname -I 2>/dev/null || true); do
-    [ -n "$ip" ] || continue
-    echo "WebUI 外部地址 : http://$ip:$NAPCAT_WEBUI_PORT/webui"
-  done
+  print_access_urls "WebUI" "$NAPCAT_WEBUI_PORT" "/webui"
+  show_login_runtime_state
   echo "查看实时日志   : docker logs -f napcat"
   echo "最近日志预览   :"
   docker logs --tail 60 napcat 2>/dev/null || true
@@ -692,16 +729,17 @@ show_login_hint() {
     qrcode)
       echo "你选择了：扫码登录"
       echo "请执行查看日志：docker logs -f napcat"
-      echo "NapCat WebUI：http://127.0.0.1:$NAPCAT_WEBUI_PORT/webui"
+      print_access_urls "NapCat WebUI" "$NAPCAT_WEBUI_PORT" "/webui"
       echo "如果日志中出现二维码或链接，直接扫码即可。"
       ;;
     webui)
       echo "你选择了：WebUI / 链接登录"
-      echo "请打开：http://127.0.0.1:$NAPCAT_WEBUI_PORT/webui"
+      print_access_urls "NapCat WebUI" "$NAPCAT_WEBUI_PORT" "/webui"
       echo "进入后按页面提示进行链接登录/扫码登录。"
       echo "如果需要 token，请查看：docker logs -f napcat"
       ;;
   esac
+  show_login_runtime_state
   echo "当前安装器不支持 QQ 明文密码自动登录。"
   echo "============================================"
 }
@@ -715,9 +753,12 @@ print_summary() {
   echo "框架端口      : $APP_PORT"
   echo "OneBot端口    : $ONEBOT_PORT"
   echo "NapCat WebUI  : $NAPCAT_WEBUI_PORT"
-  echo "控制面板      : http://127.0.0.1:$APP_PORT/panel"
   echo "面板口令      : $PANEL_PASSWORD"
   echo "Python解释器  : $PYTHON_BIN"
+  echo
+  echo "访问地址："
+  print_access_urls "- 控制面板" "$APP_PORT" "/panel"
+  print_access_urls "- NapCat WebUI" "$NAPCAT_WEBUI_PORT" "/webui"
   echo
   echo "关键文件："
   echo "- 配置文件     : $APP_DIR/.env"
@@ -727,8 +768,9 @@ print_summary() {
   echo "检查命令："
   echo "- 框架健康检查 : curl http://127.0.0.1:$APP_PORT/healthz"
   echo "- NapCat状态   : curl -X POST http://127.0.0.1:$ONEBOT_PORT/get_status"
-  echo "- NapCat WebUI : http://127.0.0.1:$NAPCAT_WEBUI_PORT/webui"
-  echo "- 控制面板     : http://127.0.0.1:$APP_PORT/panel"
+  echo
+  echo "当前登录识别："
+  show_login_runtime_state
   echo
   echo "文档入口："
   echo "- $APP_DIR/README.md"
