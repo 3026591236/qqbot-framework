@@ -42,11 +42,25 @@ def _ensure_tables() -> None:
             CREATE TABLE IF NOT EXISTS group_message_reward_settings (
                 group_id INTEGER PRIMARY KEY,
                 enabled INTEGER NOT NULL DEFAULT 0,
-                pool_name TEXT NOT NULL DEFAULT '',
+                first_pool_name TEXT NOT NULL DEFAULT '',
+                second_pool_name TEXT NOT NULL DEFAULT '',
+                third_pool_name TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT ''
             )
             """
         )
+        try:
+            conn.execute("ALTER TABLE group_message_reward_settings ADD COLUMN first_pool_name TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE group_message_reward_settings ADD COLUMN second_pool_name TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE group_message_reward_settings ADD COLUMN third_pool_name TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS group_message_reward_runs (
@@ -114,24 +128,42 @@ def _get_reward_settings(group_id: int) -> dict:
     _ensure_reward_settings(group_id)
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT enabled, pool_name FROM group_message_reward_settings WHERE group_id=?",
+            "SELECT enabled, first_pool_name, second_pool_name, third_pool_name FROM group_message_reward_settings WHERE group_id=?",
             (group_id,),
         ).fetchone()
     if row is None:
-        return {"enabled": 0, "pool_name": ""}
-    return {"enabled": int(row["enabled"] or 0), "pool_name": str(row["pool_name"] or "")}
+        return {"enabled": 0, "first_pool_name": "", "second_pool_name": "", "third_pool_name": ""}
+    return {
+        "enabled": int(row["enabled"] or 0),
+        "first_pool_name": str(row["first_pool_name"] or ""),
+        "second_pool_name": str(row["second_pool_name"] or ""),
+        "third_pool_name": str(row["third_pool_name"] or ""),
+    }
 
 
-def _set_reward_settings(group_id: int, *, enabled: int | None = None, pool_name: str | None = None) -> None:
+def _set_reward_settings(
+    group_id: int,
+    *,
+    enabled: int | None = None,
+    first_pool_name: str | None = None,
+    second_pool_name: str | None = None,
+    third_pool_name: str | None = None,
+) -> None:
     _ensure_reward_settings(group_id)
     fields: list[str] = []
     params: list[object] = []
     if enabled is not None:
         fields.append("enabled=?")
         params.append(int(enabled))
-    if pool_name is not None:
-        fields.append("pool_name=?")
-        params.append(str(pool_name))
+    if first_pool_name is not None:
+        fields.append("first_pool_name=?")
+        params.append(str(first_pool_name))
+    if second_pool_name is not None:
+        fields.append("second_pool_name=?")
+        params.append(str(second_pool_name))
+    if third_pool_name is not None:
+        fields.append("third_pool_name=?")
+        params.append(str(third_pool_name))
     fields.append("updated_at=?")
     params.append(_now())
     params.append(group_id)
@@ -145,12 +177,20 @@ def _set_reward_settings(group_id: int, *, enabled: int | None = None, pool_name
 def _list_enabled_reward_groups() -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT group_id, enabled, pool_name FROM group_message_reward_settings WHERE enabled=1 AND pool_name<>''"
+            "SELECT group_id, enabled, first_pool_name, second_pool_name, third_pool_name FROM group_message_reward_settings WHERE enabled=1"
         ).fetchall()
-    return [
-        {"group_id": int(r["group_id"]), "enabled": int(r["enabled"] or 0), "pool_name": str(r["pool_name"] or "")}
-        for r in rows
-    ]
+    result = []
+    for r in rows:
+        item = {
+            "group_id": int(r["group_id"]),
+            "enabled": int(r["enabled"] or 0),
+            "first_pool_name": str(r["first_pool_name"] or ""),
+            "second_pool_name": str(r["second_pool_name"] or ""),
+            "third_pool_name": str(r["third_pool_name"] or ""),
+        }
+        if item["first_pool_name"] or item["second_pool_name"] or item["third_pool_name"]:
+            result.append(item)
+    return result
 
 
 def _reward_already_processed(group_id: int, stat_date: str) -> bool:
@@ -216,9 +256,6 @@ async def process_group_message_reward_tick(api) -> None:
 
     for item in _list_enabled_reward_groups():
         group_id = int(item["group_id"])
-        pool_name = str(item["pool_name"] or "")
-        if not pool_name:
-            continue
         if _reward_already_processed(group_id, stat_date):
             continue
 
@@ -230,11 +267,21 @@ async def process_group_message_reward_tick(api) -> None:
         summary_parts: list[str] = []
         group_notices: list[str] = [f"昨日水群前三奖励（{stat_date}）"]
         medals = ["🥇", "🥈", "🥉"]
+        rank_pools = {
+            1: str(item.get("first_pool_name") or ""),
+            2: str(item.get("second_pool_name") or ""),
+            3: str(item.get("third_pool_name") or ""),
+        }
 
         for idx, (user_id, count) in enumerate(rows, start=1):
             medal = medals[idx - 1] if idx <= len(medals) else f"#{idx}"
-            cdk = _claim_cdk(group_id, pool_name, int(user_id), "daily_top_speakers", f"{stat_date}:{idx}")
+            pool_name = rank_pools.get(idx, "")
             name = await _resolve_group_member_name(api, group_id, user_id)
+            if not pool_name:
+                group_notices.append(f"{medal} {name}：未配置第 {idx} 名奖励卡池")
+                summary_parts.append(f"{idx}:{user_id}:no_pool")
+                continue
+            cdk = _claim_cdk(group_id, pool_name, int(user_id), "daily_top_speakers", f"{stat_date}:{idx}")
             if cdk == "":
                 group_notices.append(f"{medal} {name}：卡池 {pool_name} 已空")
                 summary_parts.append(f"{idx}:{user_id}:empty")
@@ -245,11 +292,11 @@ async def process_group_message_reward_tick(api) -> None:
                 continue
             try:
                 try:
-                    await api.send_temp_msg(group_id, int(user_id), f"水群排行奖励已发放\n群号：{group_id}\n排名：第 {idx} 名\n日期：{stat_date}\nCDK：{cdk}")
+                    await api.send_temp_msg(group_id, int(user_id), f"水群排行奖励已发放\n群号：{group_id}\n排名：第 {idx} 名\n日期：{stat_date}\n奖励卡池：{pool_name}\nCDK：{cdk}")
                 except Exception:
-                    await api.send_private_msg(int(user_id), f"水群排行奖励已发放\n群号：{group_id}\n排名：第 {idx} 名\n日期：{stat_date}\nCDK：{cdk}")
-                group_notices.append(f"{medal} {name}：奖励已私发")
-                summary_parts.append(f"{idx}:{user_id}:ok")
+                    await api.send_private_msg(int(user_id), f"水群排行奖励已发放\n群号：{group_id}\n排名：第 {idx} 名\n日期：{stat_date}\n奖励卡池：{pool_name}\nCDK：{cdk}")
+                group_notices.append(f"{medal} {name}：奖励已私发（{pool_name}）")
+                summary_parts.append(f"{idx}:{user_id}:ok:{pool_name}")
             except Exception:
                 group_notices.append(f"{medal} {name}：奖励发放失败，请检查私聊权限")
                 summary_parts.append(f"{idx}:{user_id}:send_fail")
@@ -279,11 +326,24 @@ async def on_water_reward_enable(ctx):
         await ctx.reply("请在群里使用这个命令")
         return
     arg = (ctx.text or "").replace("开启水群前三奖励", "", 1).strip()
-    if not arg:
-        await ctx.reply("用法：开启水群前三奖励 卡池名")
+    parts = [x for x in arg.split() if x]
+    if len(parts) != 3:
+        await ctx.reply("用法：开启水群前三奖励 第一名卡池 第二名卡池 第三名卡池")
         return
-    _set_reward_settings(int(ctx.group_id), enabled=1, pool_name=arg)
-    await ctx.reply(f"已开启每日水群前三自动奖励\n奖励卡池：{arg}\n说明：每天会按昨日水群前三自动发放")
+    _set_reward_settings(
+        int(ctx.group_id),
+        enabled=1,
+        first_pool_name=parts[0],
+        second_pool_name=parts[1],
+        third_pool_name=parts[2],
+    )
+    await ctx.reply(
+        "已开启每日水群前三自动奖励\n"
+        f"第一名卡池：{parts[0]}\n"
+        f"第二名卡池：{parts[1]}\n"
+        f"第三名卡池：{parts[2]}\n"
+        "说明：每天会按昨日水群前三分开发放"
+    )
 
 
 water_reward_disable = CommandPlugin(
@@ -317,12 +377,15 @@ async def on_water_reward_status(ctx):
         await ctx.reply("请在群里使用这个命令")
         return
     cfg = _get_reward_settings(int(ctx.group_id))
-    await ctx.reply(
-        "水群前三奖励状态\n"
-        f"启用：{'是' if int(cfg.get('enabled') or 0) == 1 else '否'}\n"
-        f"奖励卡池：{cfg.get('pool_name') or '未设置'}\n"
-        "发放逻辑：每天按昨日水群前三自动发放"
-    )
+    lines = [
+        "水群前三奖励状态",
+        f"启用：{'是' if int(cfg.get('enabled') or 0) == 1 else '否'}",
+        f"第一名卡池：{cfg.get('first_pool_name') or '未设置'}",
+        f"第二名卡池：{cfg.get('second_pool_name') or '未设置'}",
+        f"第三名卡池：{cfg.get('third_pool_name') or '未设置'}",
+        "发放逻辑：每天按昨日水群前三分开发放",
+    ]
+    await ctx.reply("\n".join(lines))
 
 
 today_top_speakers = CommandPlugin(
