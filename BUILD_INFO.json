@@ -1,8 +1,8 @@
 {
   "repo": "3026591236/qqbot-framework",
-  "branch": "main",
-  "version": "v0.3.0",
-  "commit": "3f9ac50",
-  "build_mode": "manual-repair",
-  "build_time": "2026-04-22T03:05:00Z"
+  "branch": "publish-main",
+  "version": "v0.3.5",
+  "commit": "18747f4",
+  "build_mode": "manual-update",
+  "build_time": "2026-04-23T15:08:26Z"
 }

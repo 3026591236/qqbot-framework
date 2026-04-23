@@ -382,6 +382,24 @@ def _pool_stats(group_id: int, pool_name: str | None = None) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def _delete_pool(group_id: int, pool_name: str) -> int:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM cdk_pool WHERE group_id=? AND pool_name=?",
+            (group_id, pool_name),
+        )
+        return int(cur.rowcount or 0)
+
+
+def _delete_cdk(group_id: int, pool_name: str, cdk_code: str) -> int:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM cdk_pool WHERE group_id=? AND pool_name=? AND cdk_code=?",
+            (group_id, pool_name, cdk_code),
+        )
+        return int(cur.rowcount or 0)
+
+
 def _record_invite(group_id: int, inviter_user_id: int, invited_user_id: int) -> tuple[bool, int]:
     with get_conn() as conn:
         existing = conn.execute(
@@ -750,6 +768,8 @@ async def on_reward_help(ctx):
         "- 删除邀请奖励 人数\n"
         "- 添加CDK 卡池名 CDK（群内）\n"
         "- 添加CDK 群号 卡池名 CDK（私聊）\n"
+        "- 删除卡池 卡池名\n"
+        "- 删除CDK 卡池名 CDK\n"
         "- 卡池状态 [卡池名]\n"
         "- 邀请统计 [@QQ/QQ号]\n"
         "- 开启随机发言发卡 卡池名 [每几分钟一次，默认10]\n"
@@ -1027,6 +1047,65 @@ async def on_add_cdk(ctx):
         await ctx.reply(f"已添加公共 CDK 到卡池：{pool_name}\n说明：这张卡添加一次后可重复发放")
     else:
         await ctx.reply(f"已添加 CDK 到卡池：{pool_name}\n说明：普通卡密发出一次会消耗一次库存")
+
+
+delete_pool = CommandPlugin(
+    name="delete_pool",
+    command="删除卡池",
+    description="delete cdk pool",
+    meta=PluginMeta(name="delete_pool", version="1.0.0", author="OpenClaw", description="删除卡池"),
+)
+
+
+@delete_pool.handle
+async def on_delete_pool(ctx):
+    if not ctx.is_group or ctx.group_id is None:
+        await ctx.reply("请在群里使用这个命令")
+        return
+    if not (_is_group_admin(ctx) or _is_reward_admin_for_group(int(ctx.group_id), ctx.user_id)):
+        await ctx.reply("只有群管理员、机器人主人或发卡管理员可以删除卡池")
+        return
+    pool_name = _extract_after_command(ctx, "删除卡池").strip()
+    if not pool_name:
+        await ctx.reply("用法：删除卡池 卡池名")
+        return
+    deleted = _delete_pool(int(ctx.group_id), pool_name)
+    if deleted <= 0:
+        await ctx.reply(f"卡池不存在或已为空：{pool_name}")
+        return
+    await ctx.reply(f"已删除卡池：{pool_name}\n共删除 {deleted} 条 CDK 记录")
+
+
+delete_cdk = CommandPlugin(
+    name="delete_cdk",
+    command="删除CDK",
+    description="delete cdk from pool",
+    meta=PluginMeta(name="delete_cdk", version="1.0.0", author="OpenClaw", description="删除CDK"),
+)
+
+
+@delete_cdk.handle
+async def on_delete_cdk(ctx):
+    if not ctx.is_group or ctx.group_id is None:
+        await ctx.reply("请在群里使用这个命令")
+        return
+    if not (_is_group_admin(ctx) or _is_reward_admin_for_group(int(ctx.group_id), ctx.user_id)):
+        await ctx.reply("只有群管理员、机器人主人或发卡管理员可以删除 CDK")
+        return
+    parts = _extract_after_command(ctx, "删除CDK").split(maxsplit=1)
+    if len(parts) < 2:
+        await ctx.reply("用法：删除CDK 卡池名 CDK")
+        return
+    pool_name = parts[0].strip()
+    cdk_code = parts[1].strip()
+    if not pool_name or not cdk_code:
+        await ctx.reply("用法：删除CDK 卡池名 CDK")
+        return
+    deleted = _delete_cdk(int(ctx.group_id), pool_name, cdk_code)
+    if deleted <= 0:
+        await ctx.reply("未找到对应 CDK，请检查卡池名和 CDK 内容")
+        return
+    await ctx.reply(f"已从卡池 {pool_name} 删除该 CDK")
 
 
 pool_status = CommandPlugin(
