@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import html
 import json
 import os
 from pathlib import Path
 import re
 from typing import Any
+
+from app.adapters.onebot import OneBotAPI
+
+IMAGE_URL_RE = re.compile(r"https?://[^\s<>'\"]+?(?:\.png|\.jpg|\.jpeg|\.gif|\.webp)(?:\?[^\s<>'\"]*)?", re.IGNORECASE)
+GENERIC_IMAGE_HOST_RE = re.compile(r"https?://[^\s<>'\"]*(?:picsum\.photos|placehold\.co|images\.unsplash\.com)[^\s<>'\"]*", re.IGNORECASE)
 
 import httpx
 
@@ -32,10 +39,21 @@ OPENCLAW_BRIDGE_DEFAULT_SESSION = os.getenv("QQBOT_OPENCLAW_BRIDGE_DEFAULT_SESSI
 OPENCLAW_BRIDGE_ALLOW_GROUP = os.getenv("QQBOT_OPENCLAW_BRIDGE_ALLOW_GROUP", "true").lower() == "true"
 OPENCLAW_BRIDGE_ALLOW_PRIVATE = os.getenv("QQBOT_OPENCLAW_BRIDGE_ALLOW_PRIVATE", "true").lower() == "true"
 OPENCLAW_BRIDGE_CONTINUE_PRIVATE = os.getenv("QQBOT_OPENCLAW_BRIDGE_CONTINUE_PRIVATE", "true").lower() == "true"
-OPENCLAW_BRIDGE_CONTINUE_GROUP = os.getenv("QQBOT_OPENCLAW_BRIDGE_CONTINUE_GROUP", "false").lower() == "true"
+OPENCLAW_BRIDGE_CONTINUE_GROUP = os.getenv("QQBOT_OPENCLAW_BRIDGE_CONTINUE_GROUP", "true").lower() == "true"
 OPENCLAW_BRIDGE_CONTINUE_WINDOW_SECONDS = int(os.getenv("QQBOT_OPENCLAW_BRIDGE_CONTINUE_WINDOW_SECONDS", "600"))
 
 _CONTINUATION_STATE: dict[str, float] = {}
+_ACTIVE_WATCHES: dict[str, dict[str, Any]] = {}
+_RECENT_TASK_STATE: dict[str, float] = {}
+_RECENT_TASK_WINDOW_SECONDS = 600
+_RESERVED_COMMAND_PREFIXES = [
+    "OpenClaw帮助",
+    "OpenClaw状态",
+    "设置OpenClaw管理员",
+    "删除OpenClaw管理员",
+    "OpenClaw管理员列表",
+    "配置OpenClaw桥接",
+]
 _CONTINUATION_EXIT_WORDS = {"退出", "结束", "关闭", "停止", "退出小小", "结束小小", "关闭小小", "停止小小", "退出爪爪", "结束爪爪", "关闭爪爪", "停止爪爪"}
 
 
@@ -63,6 +81,95 @@ def _is_pure_text_message(ctx) -> bool:
         return len(raw_message) == 1 and isinstance(raw_message[0], dict) and raw_message[0].get("type") == "text"
     text = _normalize_command_text(ctx.text or "")
     return bool(text) and "[CQ:" not in text
+
+
+def _extract_image_urls(ctx) -> list[str]:
+    urls: list[str] = []
+    raw_message = ctx.raw_event.get("message")
+    if isinstance(raw_message, list):
+        for item in raw_message:
+            if not isinstance(item, dict) or item.get("type") != "image":
+                continue
+            data = item.get("data") or {}
+            if not isinstance(data, dict):
+                continue
+            url = data.get("url") or data.get("file")
+            if isinstance(url, str) and url.strip():
+                urls.append(html.unescape(url.strip()))
+    elif isinstance(raw_message, str):
+        for match in re.finditer(r"\[CQ:image,[^\]]*url=([^,\]]+)", raw_message):
+            url = html.unescape(match.group(1).strip())
+            if url:
+                urls.append(url)
+    deduped: list[str] = []
+    for url in urls:
+        if url not in deduped:
+            deduped.append(url)
+    return deduped
+
+
+def _build_openclaw_payload(ctx, content: str) -> str:
+    content = (content or "").strip()
+    image_urls = _extract_image_urls(ctx)
+    if not image_urls:
+        return content
+    if content:
+        return content
+    return "请结合我发送的图片一起处理。"
+
+
+def _active_watch_key(ctx) -> str:
+    if ctx.user_id is None:
+        return ""
+    if ctx.is_group:
+        if ctx.group_id is None:
+            return ""
+        return f"group:{ctx.group_id}:user:{ctx.user_id}"
+    return f"private:{ctx.user_id}"
+
+
+def _has_active_watch(ctx) -> bool:
+    key = _active_watch_key(ctx)
+    if not key:
+        return False
+    if key in _ACTIVE_WATCHES:
+        return True
+    expires_at = _RECENT_TASK_STATE.get(key)
+    if not expires_at:
+        return False
+    if expires_at < asyncio.get_event_loop().time():
+        _RECENT_TASK_STATE.pop(key, None)
+        return False
+    return True
+
+
+def _touch_recent_task(ctx) -> None:
+    key = _active_watch_key(ctx)
+    if not key:
+        return
+    _RECENT_TASK_STATE[key] = asyncio.get_event_loop().time() + _RECENT_TASK_WINDOW_SECONDS
+
+
+def _build_openclaw_attachments(ctx) -> list[dict[str, str]]:
+    attachments: list[dict[str, str]] = []
+    for url in _extract_image_urls(ctx):
+        attachments.append({"url": url, "mimeType": "image/png"})
+    return attachments
+
+
+def _extract_image_urls_from_text(text: str) -> list[str]:
+    text = (text or "").strip()
+    if not text:
+        return []
+    normalized = text.replace("`", " ").replace("（", "(").replace("）", ")")
+    urls: list[str] = []
+    urls.extend(match.group(0).rstrip(')】>」』,.，`') for match in IMAGE_URL_RE.finditer(normalized))
+    urls.extend(match.group(0).rstrip(')】>」』,.，`') for match in GENERIC_IMAGE_HOST_RE.finditer(normalized))
+    deduped: list[str] = []
+    for url in urls:
+        if url and url not in deduped:
+            deduped.append(url)
+    return deduped
 
 
 def _command_variants() -> list[str]:
@@ -184,16 +291,47 @@ async def _post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
         return data if isinstance(data, dict) else {"raw": data}
 
 
-async def _send_to_session(message: str, session_key: str = "") -> dict[str, Any]:
+def _target_session(session_key: str = "") -> str:
     target = session_key or OPENCLAW_BRIDGE_DEFAULT_SESSION
     if not target:
         raise RuntimeError("未配置默认 OpenClaw sessionKey")
-    print(f"[openclaw_bridge] target_session={target} message={message[:120]!r}")
-    return await _post("/api/sessions/send", {
+    return target
+
+
+async def _send_to_session(message: str, session_key: str = "", attachments: list[dict[str, str]] | None = None) -> dict[str, Any]:
+    target = _target_session(session_key)
+    print(f"[openclaw_bridge] target_session={target} message={message[:120]!r} attachments={len(attachments or [])}")
+    payload = {
         "sessionKey": target,
         "message": message,
         "timeoutSeconds": 120,
-    })
+    }
+    if attachments:
+        payload["attachments"] = attachments
+    return await _post("/api/sessions/send", payload)
+
+
+async def _start_watch(session_key: str = "", timeout_seconds: float = 600) -> dict[str, Any]:
+    target = _target_session(session_key)
+    return await _post("/api/watch/start", {"sessionKey": target, "timeoutSeconds": timeout_seconds})
+
+
+def _watch_is_active(info: dict[str, Any] | None) -> bool:
+    if not isinstance(info, dict):
+        return False
+    task = info.get("task")
+    if task is None:
+        return False
+    return not task.done()
+
+
+async def _poll_watch(watch_id: str) -> dict[str, Any]:
+    url = f"{OPENCLAW_BRIDGE_BASE_URL}/api/watch/{watch_id}"
+    async with httpx.AsyncClient(timeout=OPENCLAW_BRIDGE_TIMEOUT) as client:
+        resp = await client.get(url, headers=_headers())
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, dict) else {"raw": data}
 
 
 async def _run_action(action: str, args: str) -> str:
@@ -281,15 +419,147 @@ openclaw_direct = RegexPlugin(
 )
 
 
-async def _handle_openclaw_chat(ctx, content: str) -> None:
+async def _download_image_for_reply(url: str) -> str:
+    safe_url = (url or "").strip()
+    if not safe_url:
+        raise RuntimeError("empty image url")
+    suffix = Path(safe_url.split("?", 1)[0]).suffix.lower() or ".png"
+    if suffix not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+        suffix = ".png"
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+        resp = await client.get(safe_url)
+        resp.raise_for_status()
+        content = resp.content
+    filename = f"openclaw_reply_{hashlib.md5((safe_url + ':' + str(len(content)) + ':' + hashlib.md5(content).hexdigest()).encode('utf-8')).hexdigest()}{suffix}"
+    target = Path('/tmp') / filename
+    target.write_bytes(content)
+    print(f"[openclaw_bridge] downloaded_image url={safe_url!r} target={str(target)!r} size={len(content)} head={content[:10]!r}")
+    return str(target)
+
+
+async def _deliver_watch_result(api: OneBotAPI, watch: dict[str, Any]) -> None:
+    image_urls = watch.get("imageUrls") or []
+    reply = watch.get("reply") or watch.get("message") or watch.get("result")
+    sent = False
+    discovered_from_text: list[str] = []
+    if isinstance(reply, str):
+        discovered_from_text = _extract_image_urls_from_text(reply)
+    all_image_urls: list[str] = []
+    if isinstance(image_urls, list):
+        all_image_urls.extend(x for x in image_urls if isinstance(x, str) and x.strip())
+    all_image_urls.extend(x for x in discovered_from_text if x not in all_image_urls)
+
+    user_id = watch.get("user_id")
+    group_id = watch.get("group_id")
+    is_group = bool(watch.get("is_group") and group_id)
+
+    for image_url in all_image_urls:
+        try:
+            local_file = await _download_image_for_reply(image_url.strip())
+            print(f"[openclaw_bridge] deliver_image local_file={local_file!r} from={image_url!r} is_group={is_group}")
+            if is_group:
+                await api.send_group_image(int(group_id), local_file)
+            elif user_id:
+                await api.send_private_image(int(user_id), local_file)
+            sent = True
+        except Exception as exc:
+            print(f"[openclaw_bridge] deliver_image_failed url={image_url!r} error={exc}")
+            if is_group:
+                await api.send_group_msg(int(group_id), image_url.strip())
+            elif user_id:
+                await api.send_private_msg(int(user_id), image_url.strip())
+            sent = True
+
+    if reply:
+        reply_text = str(reply)[:3000]
+        if discovered_from_text:
+            for image_url in discovered_from_text:
+                reply_text = reply_text.replace(image_url, "").replace(f"`{image_url}`", "").strip()
+        reply_text = reply_text.strip("` \n")
+        if reply_text:
+            if is_group:
+                await api.send_group_msg(int(group_id), reply_text)
+            elif user_id:
+                await api.send_private_msg(int(user_id), reply_text)
+            sent = True
+
+    if not sent:
+        if is_group:
+            await api.send_group_msg(int(group_id), "已执行，但没有可返回的文本或图片")
+        elif user_id:
+            await api.send_private_msg(int(user_id), "已执行，但没有可返回的文本或图片")
+
+
+async def _watch_and_push(key: str, api: OneBotAPI, watch_id: str) -> None:
+    should_clear_active = True
     try:
-        reply = await _run_action("session_send", content)
+        while True:
+            result = await _poll_watch(watch_id)
+            state = str(result.get("state") or "unknown")
+            if result.get("done"):
+                merged = _ACTIVE_WATCHES.get(key, {}) | result
+                await _deliver_watch_result(api, merged)
+                if merged.get("waitingForUser"):
+                    should_clear_active = False
+                break
+            if state in {"failed", "cancelled", "timeout"}:
+                await _deliver_watch_result(api, _ACTIVE_WATCHES.get(key, {}) | result)
+                break
+            await asyncio.sleep(2)
+    except Exception as exc:
+        watch = _ACTIVE_WATCHES.get(key, {})
+        user_id = watch.get("user_id")
+        group_id = watch.get("group_id")
+        is_group = bool(watch.get("is_group") and group_id)
+        text = f"OpenClaw 监控失败：{exc}"
+        if is_group:
+            await api.send_group_msg(int(group_id), text)
+        elif user_id:
+            await api.send_private_msg(int(user_id), text)
+    finally:
+        watch = _ACTIVE_WATCHES.get(key)
+        if isinstance(watch, dict):
+            _RECENT_TASK_STATE[key] = asyncio.get_event_loop().time() + _RECENT_TASK_WINDOW_SECONDS
+        if should_clear_active:
+            _ACTIVE_WATCHES.pop(key, None)
+
+
+async def _handle_openclaw_chat(ctx, content: str, attachments: list[dict[str, str]] | None = None) -> None:
+    try:
+        result = await _send_to_session(content, attachments=attachments)
     except Exception as exc:
         await ctx.reply(f"OpenClaw 调用失败：{exc}")
         return
     _touch_continuation(ctx)
+    _touch_recent_task(ctx)
     print(f"[openclaw_bridge] continuation_touch key={_continuation_key(ctx)!r} text={content[:80]!r}")
-    await ctx.reply(reply)
+    await _deliver_watch_result(ctx.api, {
+        "user_id": ctx.user_id,
+        "group_id": ctx.group_id,
+        "is_group": ctx.is_group,
+        **result,
+    })
+
+    try:
+        key = _active_watch_key(ctx) or _continuation_key(ctx) or f"msg:{ctx.message_type}:{ctx.group_id or 0}:{ctx.user_id or 0}"
+        existing = _ACTIVE_WATCHES.get(key)
+        if _watch_is_active(existing):
+            print(f"[openclaw_bridge] watch_reuse key={key!r} watch_id={existing.get('watchId')}")
+            return
+        watch_started = await _start_watch(timeout_seconds=600)
+        watch_id = str(watch_started.get("watchId") or "").strip()
+        if watch_id:
+            task = asyncio.create_task(_watch_and_push(key, ctx.api, watch_id))
+            _ACTIVE_WATCHES[key] = {
+                "watchId": watch_id,
+                "user_id": ctx.user_id,
+                "group_id": ctx.group_id,
+                "is_group": ctx.is_group,
+                "task": task,
+            }
+            print(f"[openclaw_bridge] watch_started key={key!r} watch_id={watch_id}")
+    except Exception as exc:
+        print(f"[openclaw_bridge] watch_start_failed error={exc}")
 
 
 @openclaw_direct.handle
@@ -308,7 +578,7 @@ async def on_openclaw_direct(ctx):
         aliases = " / ".join(_command_variants())
         await ctx.reply(f"用法：{aliases} 你的需求")
         return
-    await _handle_openclaw_chat(ctx, content)
+    await _handle_openclaw_chat(ctx, _build_openclaw_payload(ctx, content), _build_openclaw_attachments(ctx))
 
 
 set_openclaw_admin = CommandPlugin(
@@ -438,28 +708,35 @@ async def on_openclaw_continue(ctx):
     if not OPENCLAW_BRIDGE_ENABLED or not _allowed_scope(ctx):
         return
     text = _normalize_command_text(ctx.text or "")
-    if not text:
+    image_urls = _extract_image_urls(ctx)
+    if not text and not image_urls:
         return
-    if not _is_pure_text_message(ctx):
+    if not _is_pure_text_message(ctx) and not image_urls:
         print(f"[openclaw_bridge] continuation_skip_non_text key={_continuation_key(ctx)!r} raw={ctx.raw_event.get('message')!r}")
         return
-    if ctx.is_group and not OPENCLAW_BRIDGE_CONTINUE_GROUP:
-        print(f"[openclaw_bridge] continuation_skip_group_disabled key={_continuation_key(ctx)!r} text={text[:80]!r}")
+    has_active_watch = _has_active_watch(ctx)
+    if ctx.is_group and not OPENCLAW_BRIDGE_CONTINUE_GROUP and not has_active_watch:
+        print(f"[openclaw_bridge] continuation_skip_group_disabled key={_continuation_key(ctx)!r} text={text[:80]!r} active_watch={has_active_watch}")
         return
     normalized_full = _normalize_command_text(ctx.text or "")
     command_used = normalized_full in _command_variants() or any(normalized_full.startswith(f"{cmd} ") or normalized_full.startswith(f"/{cmd} ") for cmd in _command_variants())
     if command_used:
+        return
+    if any(normalized_full == prefix or normalized_full.startswith(prefix + " ") for prefix in _RESERVED_COMMAND_PREFIXES):
+        print(f"[openclaw_bridge] continuation_reserved_command text={normalized_full[:80]!r}")
         return
     if text in _CONTINUATION_EXIT_WORDS:
         _clear_continuation(ctx)
         print(f"[openclaw_bridge] continuation_clear key={_continuation_key(ctx)!r}")
         await ctx.reply("已退出小小连续对话")
         return
-    if not _continuation_active(ctx):
-        print(f"[openclaw_bridge] continuation_inactive key={_continuation_key(ctx)!r} text={text[:80]!r}")
+    if not _continuation_active(ctx) and not (ctx.is_group and has_active_watch):
+        print(f"[openclaw_bridge] continuation_inactive key={_continuation_key(ctx)!r} text={text[:80]!r} active_watch={has_active_watch}")
         return
-    print(f"[openclaw_bridge] continuation_hit key={_continuation_key(ctx)!r} text={text[:80]!r}")
-    await _handle_openclaw_chat(ctx, text)
+    payload_text = _build_openclaw_payload(ctx, text)
+    payload_attachments = _build_openclaw_attachments(ctx)
+    print(f"[openclaw_bridge] continuation_hit key={_continuation_key(ctx)!r} text={payload_text[:80]!r} attachments={len(payload_attachments)}")
+    await _handle_openclaw_chat(ctx, payload_text, payload_attachments)
 
 
 plugins = [

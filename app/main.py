@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.app_name)
 app.mount("/static", StaticFiles(directory=settings.data_dir), name="static")
+app.mount("/public-downloads", StaticFiles(directory="/root/.openclaw/workspace/public-downloads"), name="public-downloads")
 app.include_router(panel_router)
 bot = BotApp(api_base=settings.onebot_api_base, adapter_name=settings.adapter)
 

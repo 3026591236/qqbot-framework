@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+from pathlib import Path
+
 import httpx
 
 
@@ -57,11 +60,29 @@ class OneBotAPI:
     async def send_group_xml(self, group_id: int, data: str) -> dict:
         return await self.send_group_msg(group_id, [{"type": "xml", "data": {"data": data}}])
 
+    def _normalize_image_file(self, file: str) -> str:
+        value = str(file or "").strip()
+        if not value:
+            return value
+        if value.startswith(("http://", "https://", "base64://", "file://")):
+            return value
+        path = Path(value)
+        if path.is_absolute() and path.exists() and path.is_file():
+            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+            return f"base64://{encoded}"
+        if path.is_absolute():
+            return path.resolve().as_uri()
+        return value
+
     async def send_private_image(self, user_id: int, file: str) -> dict:
-        return await self.send_private_msg(user_id, [{"type": "image", "data": {"file": file}}])
+        normalized = self._normalize_image_file(file)
+        print(f"[onebot] send_private_image user_id={user_id} raw={file!r} normalized_prefix={normalized[:32]!r}")
+        return await self.send_private_msg(user_id, [{"type": "image", "data": {"file": normalized}}])
 
     async def send_group_image(self, group_id: int, file: str) -> dict:
-        return await self.send_group_msg(group_id, [{"type": "image", "data": {"file": file}}])
+        normalized = self._normalize_image_file(file)
+        print(f"[onebot] send_group_image group_id={group_id} raw={file!r} normalized_prefix={normalized[:32]!r}")
+        return await self.send_group_msg(group_id, [{"type": "image", "data": {"file": normalized}}])
 
     async def delete_msg(self, message_id: int | str) -> dict:
         return await self._post("delete_msg", {"message_id": message_id})
