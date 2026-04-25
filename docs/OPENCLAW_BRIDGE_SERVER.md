@@ -51,8 +51,8 @@ curl http://127.0.0.1:3001/health
 QQBOT_OPENCLAW_BRIDGE_ENABLED=true
 QQBOT_OPENCLAW_BRIDGE_BASE_URL=http://127.0.0.1:3001
 QQBOT_OPENCLAW_BRIDGE_API_KEY=your-secret-token
-QQBOT_OPENCLAW_BRIDGE_DEFAULT_SESSION=你的sessionKey
-QQBOT_OPENCLAW_BRIDGE_COMMAND=小小
+QQBOT_OPENCLAW_BRIDGE_DEFAULT_SESSION=agent:main:subagent:cee05ebc-ddb7-4d11-993d-1bd393ef70af
+QQBOT_OPENCLAW_BRIDGE_COMMAND=爪爪
 QQBOT_OPENCLAW_BRIDGE_ADMIN_IDS=123456,234567
 ```
 
@@ -60,3 +60,6 @@ QQBOT_OPENCLAW_BRIDGE_ADMIN_IDS=123456,234567
 
 - 这里 `QQBOT_OPENCLAW_BRIDGE_API_KEY` 对应的是 bridge 服务的 `OPENCLAW_BRIDGE_TOKEN`
 - 如果你不想开放无鉴权访问，务必设置 token
+- 默认目标 session 建议使用专用 bridge 会话，不要复用 `agent:main:main`
+- bridge 应只把最终文本回复返回给 QQ，不应透传 toolCall/toolUse/JSON 中间态
+- 当前插件侧已支持私聊连续对话接管；群聊自动续聊默认关闭，避免误接他人消息

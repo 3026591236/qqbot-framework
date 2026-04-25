@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 import httpx
@@ -26,15 +27,68 @@ OPENCLAW_BRIDGE_ALLOWED_ACTIONS = [x.strip() for x in os.getenv(
     "xiaoxiao3d,weather,github,session_send"
 ).split(",") if x.strip()]
 OPENCLAW_BRIDGE_COMMAND = os.getenv("QQBOT_OPENCLAW_BRIDGE_COMMAND", "爪爪")
+OPENCLAW_BRIDGE_ALIASES = [x.strip() for x in os.getenv("QQBOT_OPENCLAW_BRIDGE_ALIASES", "小小").split(",") if x.strip()]
 OPENCLAW_BRIDGE_DEFAULT_SESSION = os.getenv("QQBOT_OPENCLAW_BRIDGE_DEFAULT_SESSION", "")
 OPENCLAW_BRIDGE_ALLOW_GROUP = os.getenv("QQBOT_OPENCLAW_BRIDGE_ALLOW_GROUP", "true").lower() == "true"
 OPENCLAW_BRIDGE_ALLOW_PRIVATE = os.getenv("QQBOT_OPENCLAW_BRIDGE_ALLOW_PRIVATE", "true").lower() == "true"
+OPENCLAW_BRIDGE_CONTINUE_PRIVATE = os.getenv("QQBOT_OPENCLAW_BRIDGE_CONTINUE_PRIVATE", "true").lower() == "true"
+OPENCLAW_BRIDGE_CONTINUE_GROUP = os.getenv("QQBOT_OPENCLAW_BRIDGE_CONTINUE_GROUP", "false").lower() == "true"
+OPENCLAW_BRIDGE_CONTINUE_WINDOW_SECONDS = int(os.getenv("QQBOT_OPENCLAW_BRIDGE_CONTINUE_WINDOW_SECONDS", "600"))
+
+_CONTINUATION_STATE: dict[str, float] = {}
+_CONTINUATION_EXIT_WORDS = {"退出", "结束", "关闭", "停止", "退出小小", "结束小小", "关闭小小", "停止小小", "退出爪爪", "结束爪爪", "关闭爪爪", "停止爪爪"}
 
 
-def _extract_after_command(ctx, command: str) -> str:
-    text = (ctx.text or "").strip()
-    variants = [command, f"/{command}"] if not command.startswith("/") else [command, command[1:]]
+def _normalize_command_text(text: str) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
+    text = text.replace("\u3000", " ")
+    parts = [part.strip() for part in text.splitlines() if part.strip()]
+    text = " ".join(parts).strip()
+    while text.startswith("[CQ:at,"):
+        end = text.find("]")
+        if end == -1:
+            break
+        text = text[end + 1:].lstrip()
+    return text
+
+
+def _is_pure_text_message(ctx) -> bool:
+    raw_message = ctx.raw_event.get("message")
+    if isinstance(raw_message, str):
+        normalized = _normalize_command_text(raw_message)
+        return bool(normalized) and "[CQ:" not in raw_message and "[CQ:" not in normalized
+    if isinstance(raw_message, list):
+        return len(raw_message) == 1 and isinstance(raw_message[0], dict) and raw_message[0].get("type") == "text"
+    text = _normalize_command_text(ctx.text or "")
+    return bool(text) and "[CQ:" not in text
+
+
+def _command_variants() -> list[str]:
+    commands: list[str] = []
+    for cmd in [OPENCLAW_BRIDGE_COMMAND, *OPENCLAW_BRIDGE_ALIASES]:
+        cmd = (cmd or "").strip()
+        if cmd and cmd not in commands:
+            commands.append(cmd)
+    return commands
+
+
+def _extract_after_command(ctx, command: str | None = None) -> str:
+    text = _normalize_command_text(ctx.text or "")
+    variants: list[str] = []
+    for cmd in ([command] if command else _command_variants()):
+        if not cmd:
+            continue
+        if cmd.startswith("/"):
+            variants.extend([cmd, cmd[1:]])
+        else:
+            variants.extend([cmd, f"/{cmd}"])
+    deduped: list[str] = []
     for variant in variants:
+        if variant not in deduped:
+            deduped.append(variant)
+    for variant in deduped:
         if text == variant:
             return ""
         prefix = variant + " "
@@ -67,6 +121,44 @@ def _allowed_scope(ctx) -> bool:
     return OPENCLAW_BRIDGE_ALLOW_PRIVATE
 
 
+def _continuation_key(ctx) -> str:
+    if ctx.user_id is None:
+        return ""
+    if ctx.is_group:
+        if not OPENCLAW_BRIDGE_CONTINUE_GROUP or ctx.group_id is None:
+            return ""
+        return f"group:{ctx.group_id}:user:{ctx.user_id}"
+    if not OPENCLAW_BRIDGE_CONTINUE_PRIVATE:
+        return ""
+    return f"private:{ctx.user_id}"
+
+
+def _continuation_active(ctx) -> bool:
+    key = _continuation_key(ctx)
+    if not key:
+        return False
+    expires_at = _CONTINUATION_STATE.get(key)
+    if not expires_at:
+        return False
+    if expires_at < asyncio.get_event_loop().time():
+        _CONTINUATION_STATE.pop(key, None)
+        return False
+    return True
+
+
+def _touch_continuation(ctx) -> None:
+    key = _continuation_key(ctx)
+    if not key:
+        return
+    _CONTINUATION_STATE[key] = asyncio.get_event_loop().time() + OPENCLAW_BRIDGE_CONTINUE_WINDOW_SECONDS
+
+
+def _clear_continuation(ctx) -> None:
+    key = _continuation_key(ctx)
+    if key:
+        _CONTINUATION_STATE.pop(key, None)
+
+
 def _is_admin(user_id: int | None) -> bool:
     if user_id is None:
         return False
@@ -96,6 +188,7 @@ async def _send_to_session(message: str, session_key: str = "") -> dict[str, Any
     target = session_key or OPENCLAW_BRIDGE_DEFAULT_SESSION
     if not target:
         raise RuntimeError("未配置默认 OpenClaw sessionKey")
+    print(f"[openclaw_bridge] target_session={target} message={message[:120]!r}")
     return await _post("/api/sessions/send", {
         "sessionKey": target,
         "message": message,
@@ -178,12 +271,25 @@ async def on_openclaw_status(ctx):
     )
 
 
+_OPENCLAW_BRIDGE_COMMAND_PATTERN = "|".join(re.escape(x) for x in _command_variants())
+
 openclaw_direct = RegexPlugin(
     name="openclaw_bridge_direct",
-    pattern=rf"^(?:/)?{OPENCLAW_BRIDGE_COMMAND}(?:\s+.*)?$",
+    pattern=rf"^(?:\[CQ:at,[^\]]+\]\s*)*(?:/)?(?:{_OPENCLAW_BRIDGE_COMMAND_PATTERN})(?:\s+.*)?$",
     description="send raw request to OpenClaw session via fixed command",
-    meta=PluginMeta(name="openclaw_bridge_direct", version="1.2.0", author="OpenClaw", description="固定指令直通 OpenClaw"),
+    meta=PluginMeta(name="openclaw_bridge_direct", version="1.4.0", author="OpenClaw", description="固定指令直通 OpenClaw"),
 )
+
+
+async def _handle_openclaw_chat(ctx, content: str) -> None:
+    try:
+        reply = await _run_action("session_send", content)
+    except Exception as exc:
+        await ctx.reply(f"OpenClaw 调用失败：{exc}")
+        return
+    _touch_continuation(ctx)
+    print(f"[openclaw_bridge] continuation_touch key={_continuation_key(ctx)!r} text={content[:80]!r}")
+    await ctx.reply(reply)
 
 
 @openclaw_direct.handle
@@ -197,16 +303,12 @@ async def on_openclaw_direct(ctx):
     if not _allowed_scope(ctx):
         await ctx.reply("当前场景未开放 OpenClaw 桥接")
         return
-    content = _extract_after_command(ctx, OPENCLAW_BRIDGE_COMMAND)
+    content = _extract_after_command(ctx)
     if not content:
-        await ctx.reply(f"用法：{OPENCLAW_BRIDGE_COMMAND} 你的需求")
+        aliases = " / ".join(_command_variants())
+        await ctx.reply(f"用法：{aliases} 你的需求")
         return
-    try:
-        reply = await _run_action("session_send", content)
-    except Exception as exc:
-        await ctx.reply(f"OpenClaw 调用失败：{exc}")
-        return
-    await ctx.reply(reply)
+    await _handle_openclaw_chat(ctx, content)
 
 
 set_openclaw_admin = CommandPlugin(
@@ -321,10 +423,50 @@ async def on_configure_openclaw(ctx):
     )
 
 
+openclaw_continue = RegexPlugin(
+    name="openclaw_bridge_continue",
+    pattern=r"^.+$",
+    description="continue private openclaw chat without wake word",
+    meta=PluginMeta(name="openclaw_bridge_continue", version="1.0.0", author="OpenClaw", description="私聊连续对话接管"),
+)
+
+
+@openclaw_continue.handle
+async def on_openclaw_continue(ctx):
+    if not _is_admin(ctx.user_id):
+        return
+    if not OPENCLAW_BRIDGE_ENABLED or not _allowed_scope(ctx):
+        return
+    text = _normalize_command_text(ctx.text or "")
+    if not text:
+        return
+    if not _is_pure_text_message(ctx):
+        print(f"[openclaw_bridge] continuation_skip_non_text key={_continuation_key(ctx)!r} raw={ctx.raw_event.get('message')!r}")
+        return
+    if ctx.is_group and not OPENCLAW_BRIDGE_CONTINUE_GROUP:
+        print(f"[openclaw_bridge] continuation_skip_group_disabled key={_continuation_key(ctx)!r} text={text[:80]!r}")
+        return
+    normalized_full = _normalize_command_text(ctx.text or "")
+    command_used = normalized_full in _command_variants() or any(normalized_full.startswith(f"{cmd} ") or normalized_full.startswith(f"/{cmd} ") for cmd in _command_variants())
+    if command_used:
+        return
+    if text in _CONTINUATION_EXIT_WORDS:
+        _clear_continuation(ctx)
+        print(f"[openclaw_bridge] continuation_clear key={_continuation_key(ctx)!r}")
+        await ctx.reply("已退出小小连续对话")
+        return
+    if not _continuation_active(ctx):
+        print(f"[openclaw_bridge] continuation_inactive key={_continuation_key(ctx)!r} text={text[:80]!r}")
+        return
+    print(f"[openclaw_bridge] continuation_hit key={_continuation_key(ctx)!r} text={text[:80]!r}")
+    await _handle_openclaw_chat(ctx, text)
+
+
 plugins = [
     openclaw_help,
     openclaw_status,
     openclaw_direct,
+    openclaw_continue,
     set_openclaw_admin,
     remove_openclaw_admin,
     list_openclaw_admins,

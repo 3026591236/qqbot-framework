@@ -107,14 +107,31 @@ def _verify_bridge_token(auth: str | None) -> None:
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
+def _extract_text_reply(message: Any) -> str | dict[str, Any] | list[Any] | None:
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, list):
+            texts: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+                    text = item["text"].strip()
+                    if text:
+                        texts.append(text)
+            return "\n".join(texts).strip() if texts else None
+        return None
+    return message if isinstance(message, str) and message.strip() else None
+
+
+def _message_has_final_text(message: Any) -> bool:
+    return _extract_text_reply(message) is not None
+
+
 async def _gateway_request(ws, method: str, params: dict[str, Any]) -> dict[str, Any]:
     req_id = str(uuid.uuid4())
     req = {"type": "req", "id": req_id, "method": method, "params": params}
-    logger.info("gateway request method=%s payload=%s", method, req)
     await ws.send(json.dumps(req, ensure_ascii=False))
     while True:
         raw = await ws.recv()
-        logger.info("gateway raw response method=%s raw=%s", method, raw)
         msg = json.loads(raw)
         if not isinstance(msg, dict):
             continue
@@ -135,7 +152,6 @@ async def _wait_connect_nonce(ws, timeout_seconds: float = 5.0) -> str:
     deadline = asyncio.get_event_loop().time() + timeout_seconds
     while asyncio.get_event_loop().time() < deadline:
         raw = await asyncio.wait_for(ws.recv(), timeout=max(0.5, deadline - asyncio.get_event_loop().time()))
-        logger.info("gateway pre-connect raw=%s", raw)
         msg = json.loads(raw)
         if not isinstance(msg, dict):
             continue
@@ -195,6 +211,20 @@ async def api_sessions_send(payload: SessionSendRequest, authorization: str | No
             connect_params["device"] = device_auth
         await _gateway_request(ws, "connect", connect_params)
         await _gateway_request(ws, "sessions.subscribe", {"sessionKey": payload.sessionKey})
+        history_before = await _gateway_request(ws, "chat.history", {
+            "sessionKey": payload.sessionKey,
+            "limit": 1,
+        })
+        before_messages = history_before.get("messages") if isinstance(history_before, dict) else None
+        baseline_seq = 0
+        if isinstance(before_messages, list) and before_messages:
+            last_message = before_messages[-1]
+            if isinstance(last_message, dict):
+                openclaw_meta = last_message.get("__openclaw") or {}
+                seq = openclaw_meta.get("seq")
+                if isinstance(seq, int):
+                    baseline_seq = seq
+
         await _gateway_request(ws, "chat.send", {
             "sessionKey": payload.sessionKey,
             "message": payload.message,
@@ -204,59 +234,77 @@ async def api_sessions_send(payload: SessionSendRequest, authorization: str | No
         deadline = asyncio.get_event_loop().time() + payload.timeoutSeconds
         final_message: dict[str, Any] | None = None
         final_run_id: str | None = None
+        next_history_check_at = asyncio.get_event_loop().time() + 4.0
+        history_check_interval = 4.0
         while asyncio.get_event_loop().time() < deadline:
-            remaining = max(1.0, deadline - asyncio.get_event_loop().time())
-            saw_final = False
+            remaining = max(0.1, deadline - asyncio.get_event_loop().time())
+            now = asyncio.get_event_loop().time()
+            wait_timeout = min(2.5, remaining, max(0.1, next_history_check_at - now))
             try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=min(3.0, remaining))
+                raw = await asyncio.wait_for(ws.recv(), timeout=wait_timeout)
                 msg = json.loads(raw)
-                if isinstance(msg, dict):
-                    logger.info("gateway event loop raw=%s", raw)
-                    if msg.get("type") == "event":
-                        event_name = msg.get("event")
-                        event_payload = msg.get("payload") or {}
-                        if event_payload.get("sessionKey") == payload.sessionKey:
-                            if event_name == "chat" and event_payload.get("state") == "final":
-                                final_run_id = event_payload.get("runId") if isinstance(event_payload.get("runId"), str) else None
-                                saw_final = True
-                            elif event_name == "chat.final":
-                                final_message = event_payload.get("message") or event_payload
-                                break
             except asyncio.TimeoutError:
-                pass
+                msg = None
 
-            history = await _gateway_request(ws, "chat.history", {
-                "sessionKey": payload.sessionKey,
-                "limit": 10,
-            })
-            items = history.get("items") if isinstance(history, dict) else None
-            if isinstance(items, list):
-                for item in reversed(items):
-                    if not isinstance(item, dict):
-                        continue
-                    if item.get("role") != "assistant":
-                        continue
-                    if final_run_id and item.get("runId") not in (final_run_id, None):
-                        continue
-                    final_message = item
+            if isinstance(msg, dict) and msg.get("type") == "event":
+                event_name = msg.get("event")
+                event_payload = msg.get("payload") or {}
+                if event_payload.get("sessionKey") == payload.sessionKey:
+                    if event_name == "session.message":
+                        message = event_payload.get("message")
+                        if isinstance(message, dict) and message.get("role") == "assistant":
+                            openclaw_meta = message.get("__openclaw") or {}
+                            seq = openclaw_meta.get("seq")
+                            if isinstance(seq, int) and seq > baseline_seq and _message_has_final_text(message):
+                                final_message = message
+                                break
+                    elif event_name == "chat.final":
+                        message = event_payload.get("message") or event_payload
+                        if isinstance(message, dict):
+                            openclaw_meta = message.get("__openclaw") or {}
+                            seq = openclaw_meta.get("seq")
+                            if (not isinstance(seq, int) or seq > baseline_seq) and _message_has_final_text(message):
+                                final_message = message
+                                break
+                    elif event_name == "chat" and event_payload.get("state") == "final":
+                        final_run_id = event_payload.get("runId") if isinstance(event_payload.get("runId"), str) else None
+                        next_history_check_at = asyncio.get_event_loop().time()
+
+            now = asyncio.get_event_loop().time()
+            if final_message is None and now >= next_history_check_at:
+                history = await _gateway_request(ws, "chat.history", {
+                    "sessionKey": payload.sessionKey,
+                    "limit": 10,
+                })
+                items = None
+                if isinstance(history, dict):
+                    items = history.get("messages") or history.get("items")
+                if isinstance(items, list):
+                    for item in reversed(items):
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("role") != "assistant":
+                            continue
+                        openclaw_meta = item.get("__openclaw") or {}
+                        seq = openclaw_meta.get("seq")
+                        if not isinstance(seq, int) or seq <= baseline_seq:
+                            continue
+                        if final_run_id and item.get("runId") not in (final_run_id, None):
+                            continue
+                        if not _message_has_final_text(item):
+                            continue
+                        final_message = item
+                        break
+                next_history_check_at = now + history_check_interval
+                if final_message is not None:
                     break
-            if final_message is not None and (saw_final or final_run_id is None):
-                break
+
         if final_message is None:
             raise HTTPException(status_code=504, detail="wait chat final timeout")
-        reply = None
-        if isinstance(final_message, dict):
-            content = final_message.get("content")
-            if isinstance(content, list):
-                texts = []
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
-                        texts.append(item["text"])
-                reply = "\n".join(texts).strip() if texts else final_message
-            else:
-                reply = final_message
-        else:
-            reply = final_message
+
+        reply = _extract_text_reply(final_message)
+        if reply is None:
+            raise HTTPException(status_code=504, detail="wait final text reply timeout")
         return SessionSendResponse(ok=True, reply=reply, raw={"message": final_message})
     except HTTPException as exc:
         logger.error("bridge http error detail=%s", exc.detail)

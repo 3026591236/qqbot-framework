@@ -22,13 +22,17 @@
 QQBOT_OPENCLAW_BRIDGE_ENABLED=true
 QQBOT_OPENCLAW_BRIDGE_BASE_URL=http://127.0.0.1:3001
 QQBOT_OPENCLAW_BRIDGE_API_KEY=
-QQBOT_OPENCLAW_BRIDGE_DEFAULT_SESSION=
+QQBOT_OPENCLAW_BRIDGE_DEFAULT_SESSION=agent:main:subagent:cee05ebc-ddb7-4d11-993d-1bd393ef70af
 QQBOT_OPENCLAW_BRIDGE_ADMIN_IDS=123456,234567
 QQBOT_OPENCLAW_BRIDGE_COMMAND=爪爪
+QQBOT_OPENCLAW_BRIDGE_ALIASES=小小
 QQBOT_OPENCLAW_BRIDGE_ALLOWED_ACTIONS=xiaoxiao3d,weather,github,session_send
 QQBOT_OPENCLAW_BRIDGE_ALLOW_GROUP=true
 QQBOT_OPENCLAW_BRIDGE_ALLOW_PRIVATE=true
 QQBOT_OPENCLAW_BRIDGE_TIMEOUT=90
+QQBOT_OPENCLAW_BRIDGE_CONTINUE_PRIVATE=true
+QQBOT_OPENCLAW_BRIDGE_CONTINUE_GROUP=false
+QQBOT_OPENCLAW_BRIDGE_CONTINUE_WINDOW_SECONDS=600
 ```
 
 ## 权限规则
@@ -61,6 +65,7 @@ QQBOT_OPENCLAW_BRIDGE_TIMEOUT=90
 默认固定指令是：
 
 - `爪爪`
+- `小小`（兼容别名）
 
 当 QQ 消息是：
 
@@ -74,6 +79,21 @@ QQBOT_OPENCLAW_BRIDGE_TIMEOUT=90
 
 ```env
 QQBOT_OPENCLAW_BRIDGE_COMMAND=爪爪
+```
+
+## 连续对话
+
+当前行为：
+
+- 私聊：支持连续对话。先用 `爪爪 ...` 或 `小小 ...` 唤醒后，后续第二段、第三段纯文本消息会继续转发给 OpenClaw。
+- 群聊：当前默认只支持显式唤醒，不默认开启自动续聊，避免误接别人的消息。
+
+可通过环境变量控制：
+
+```env
+QQBOT_OPENCLAW_BRIDGE_CONTINUE_PRIVATE=true
+QQBOT_OPENCLAW_BRIDGE_CONTINUE_GROUP=false
+QQBOT_OPENCLAW_BRIDGE_CONTINUE_WINDOW_SECONDS=600
 ```
 
 ## 动作白名单
@@ -94,4 +114,6 @@ QQBOT_OPENCLAW_BRIDGE_COMMAND=爪爪
 - 不要默认开放任意 shell / exec
 - 先做白名单动作，不要做任意 prompt 透传
 - 高风险动作建议拆成单独 action 名并加二次确认
-- sessionKey 最好固定到一个专用 OpenClaw 会话
+- sessionKey 最好固定到一个专用 OpenClaw 会话，不要复用 `agent:main:main` 这种共享主会话
+- 当前联调可用的专用 bridge session：`agent:main:subagent:cee05ebc-ddb7-4d11-993d-1bd393ef70af`
+- 这个专用会话的目标风格应是“正常聊天态”：直接回答用户问题，不暴露 toolCall / toolUse / memory_search / read / JSON 中间态
