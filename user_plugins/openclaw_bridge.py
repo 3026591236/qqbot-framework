@@ -25,6 +25,7 @@ OPENCLAW_BRIDGE_ALLOWED_ACTIONS = [x.strip() for x in os.getenv(
     "QQBOT_OPENCLAW_BRIDGE_ALLOWED_ACTIONS",
     "xiaoxiao3d,weather,github,session_send"
 ).split(",") if x.strip()]
+OPENCLAW_BRIDGE_COMMAND = os.getenv("QQBOT_OPENCLAW_BRIDGE_COMMAND", "小小")
 OPENCLAW_BRIDGE_DEFAULT_SESSION = os.getenv("QQBOT_OPENCLAW_BRIDGE_DEFAULT_SESSION", "")
 OPENCLAW_BRIDGE_ALLOW_GROUP = os.getenv("QQBOT_OPENCLAW_BRIDGE_ALLOW_GROUP", "true").lower() == "true"
 OPENCLAW_BRIDGE_ALLOW_PRIVATE = os.getenv("QQBOT_OPENCLAW_BRIDGE_ALLOW_PRIVATE", "true").lower() == "true"
@@ -131,7 +132,7 @@ openclaw_help = CommandPlugin(
     name="openclaw_bridge_help",
     command="OpenClaw帮助",
     description="show openclaw bridge help",
-    meta=PluginMeta(name="openclaw_bridge_help", version="1.0.0", author="OpenClaw", description="OpenClaw 管理桥接帮助"),
+    meta=PluginMeta(name="openclaw_bridge_help", version="1.1.0", author="OpenClaw", description="OpenClaw 管理桥接帮助"),
 )
 
 
@@ -139,16 +140,13 @@ openclaw_help = CommandPlugin(
 async def on_openclaw_help(ctx):
     await ctx.reply(
         "OpenClaw 管理桥接命令：\n"
+        f"- {OPENCLAW_BRIDGE_COMMAND} 你的需求（固定直通指令）\n"
         "- OpenClaw状态\n"
-        "- OpenClaw动作 xiaoxiao3d\n"
-        "- OpenClaw动作 weather 城市\n"
-        "- OpenClaw动作 github 参数\n"
-        "- OpenClaw发送 具体内容\n"
         "- 设置OpenClaw管理员 QQ号\n"
         "- 删除OpenClaw管理员 QQ号\n"
         "- OpenClaw管理员列表\n"
         "- 配置OpenClaw桥接 地址 [Key] [sessionKey]（仅主人私聊）\n"
-        "说明：只有主人或设置的管理员可以操作。"
+        "说明：固定指令后面的内容会原样转发给 OpenClaw，由 OpenClaw 执行后再回复回来。"
     )
 
 
@@ -175,20 +173,21 @@ async def on_openclaw_status(ctx):
         f"Key：{masked_key}\n"
         f"默认会话：{OPENCLAW_BRIDGE_DEFAULT_SESSION or '-'}\n"
         f"管理员：{admins}\n"
+        f"固定指令：{OPENCLAW_BRIDGE_COMMAND}\n"
         f"允许动作：{', '.join(OPENCLAW_BRIDGE_ALLOWED_ACTIONS) or '-'}"
     )
 
 
-openclaw_send = CommandPlugin(
-    name="openclaw_bridge_send",
-    command="OpenClaw发送",
-    description="send a plain message to OpenClaw session",
-    meta=PluginMeta(name="openclaw_bridge_send", version="1.0.0", author="OpenClaw", description="向 OpenClaw 会话发送消息"),
+openclaw_direct = CommandPlugin(
+    name="openclaw_bridge_direct",
+    command=OPENCLAW_BRIDGE_COMMAND,
+    description="send raw request to OpenClaw session via fixed command",
+    meta=PluginMeta(name="openclaw_bridge_direct", version="1.1.0", author="OpenClaw", description="固定指令直通 OpenClaw"),
 )
 
 
-@openclaw_send.handle
-async def on_openclaw_send(ctx):
+@openclaw_direct.handle
+async def on_openclaw_direct(ctx):
     if not _is_admin(ctx.user_id):
         await ctx.reply("没有权限")
         return
@@ -198,48 +197,14 @@ async def on_openclaw_send(ctx):
     if not _allowed_scope(ctx):
         await ctx.reply("当前场景未开放 OpenClaw 桥接")
         return
-    content = _extract_after_command(ctx, "OpenClaw发送")
+    content = _extract_after_command(ctx, OPENCLAW_BRIDGE_COMMAND)
     if not content:
-        await ctx.reply("用法：OpenClaw发送 具体内容")
+        await ctx.reply(f"用法：{OPENCLAW_BRIDGE_COMMAND} 你的需求")
         return
     try:
         reply = await _run_action("session_send", content)
     except Exception as exc:
         await ctx.reply(f"OpenClaw 调用失败：{exc}")
-        return
-    await ctx.reply(reply)
-
-
-openclaw_action = CommandPlugin(
-    name="openclaw_bridge_action",
-    command="OpenClaw动作",
-    description="run a whitelisted action via OpenClaw",
-    meta=PluginMeta(name="openclaw_bridge_action", version="1.0.0", author="OpenClaw", description="执行白名单 OpenClaw 动作"),
-)
-
-
-@openclaw_action.handle
-async def on_openclaw_action(ctx):
-    if not _is_admin(ctx.user_id):
-        await ctx.reply("没有权限")
-        return
-    if not OPENCLAW_BRIDGE_ENABLED:
-        await ctx.reply("OpenClaw 桥接未启用")
-        return
-    if not _allowed_scope(ctx):
-        await ctx.reply("当前场景未开放 OpenClaw 桥接")
-        return
-    raw = _extract_after_command(ctx, "OpenClaw动作")
-    if not raw:
-        await ctx.reply("用法：OpenClaw动作 动作名 [参数]\n例如：OpenClaw动作 xiaoxiao3d")
-        return
-    parts = raw.split(maxsplit=1)
-    action = parts[0].strip()
-    args = parts[1].strip() if len(parts) > 1 else ""
-    try:
-        reply = await _run_action(action, args)
-    except Exception as exc:
-        await ctx.reply(f"OpenClaw 动作执行失败：{exc}")
         return
     await ctx.reply(reply)
 
@@ -359,8 +324,7 @@ async def on_configure_openclaw(ctx):
 plugins = [
     openclaw_help,
     openclaw_status,
-    openclaw_send,
-    openclaw_action,
+    openclaw_direct,
     set_openclaw_admin,
     remove_openclaw_admin,
     list_openclaw_admins,

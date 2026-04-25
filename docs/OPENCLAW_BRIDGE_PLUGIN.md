@@ -6,12 +6,9 @@
 
 - 只有主人或手动设置的管理员可以操作
 - 普通成员无权调用
-- 默认只开放白名单动作，避免高风险指令乱跑
-- 可以把固定动作路由到 OpenClaw，例如：
-  - `xiaoxiao3d`
-  - `weather`
-  - `github`
-  - 直接发送一段消息给指定 OpenClaw session
+- 使用一个固定指令把后续内容原样转发给 OpenClaw
+- OpenClaw 执行完成后，把返回结果再回复到 QQ
+- 仍保留白名单动作扩展能力，便于后续做更强约束
 
 ## 文件位置
 
@@ -27,6 +24,7 @@ QQBOT_OPENCLAW_BRIDGE_BASE_URL=http://127.0.0.1:3001
 QQBOT_OPENCLAW_BRIDGE_API_KEY=
 QQBOT_OPENCLAW_BRIDGE_DEFAULT_SESSION=
 QQBOT_OPENCLAW_BRIDGE_ADMIN_IDS=123456,234567
+QQBOT_OPENCLAW_BRIDGE_COMMAND=小小
 QQBOT_OPENCLAW_BRIDGE_ALLOWED_ACTIONS=xiaoxiao3d,weather,github,session_send
 QQBOT_OPENCLAW_BRIDGE_ALLOW_GROUP=true
 QQBOT_OPENCLAW_BRIDGE_ALLOW_PRIVATE=true
@@ -42,27 +40,45 @@ QQBOT_OPENCLAW_BRIDGE_TIMEOUT=90
 
 ## 已实现命令
 
+- `小小 你的需求`（默认固定直通指令，可用环境变量改名）
 - `OpenClaw帮助`
 - `OpenClaw状态`
-- `OpenClaw动作 xiaoxiao3d`
-- `OpenClaw动作 weather 北京`
-- `OpenClaw动作 github owner/repo`
-- `OpenClaw发送 具体内容`
 - `设置OpenClaw管理员 QQ号`
 - `删除OpenClaw管理员 QQ号`
 - `OpenClaw管理员列表`
 - `配置OpenClaw桥接 地址 [Key] [sessionKey]`
 
+例如：
+
+```text
+小小 用 xiaoxiao3d 登录后台
+小小 帮我查今天北京天气
+小小 去看一下 GitHub 仓库的最新 issue
+```
+
+## 固定指令模式
+
+默认固定指令是：
+
+- `小小`
+
+当 QQ 消息是：
+
+```text
+小小 你的需求内容
+```
+
+插件会把“你的需求内容”原样转发给 OpenClaw 默认会话，然后把 OpenClaw 的回复再返回给 QQ。
+
+如果你想改唤醒词，可修改：
+
+```env
+QQBOT_OPENCLAW_BRIDGE_COMMAND=小小
+```
+
 ## 动作白名单
 
-当前默认白名单：
-
-- `xiaoxiao3d`
-- `weather`
-- `github`
-- `session_send`
-
-你可以继续扩展 `_run_action()`，增加更多固定动作映射。
+虽然日常使用推荐固定指令直通，但代码里仍保留了白名单动作映射能力，后续你可以继续扩展 `_run_action()`，增加更严格的受控动作。
 
 ## 推荐接法
 
