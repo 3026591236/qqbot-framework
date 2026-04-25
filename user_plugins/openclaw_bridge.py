@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from app.auth import is_owner
-from app.core.plugin import CommandPlugin, PluginMeta
+from app.core.plugin import CommandPlugin, PluginMeta, RegexPlugin
 
 plugin = None
 
@@ -25,7 +25,7 @@ OPENCLAW_BRIDGE_ALLOWED_ACTIONS = [x.strip() for x in os.getenv(
     "QQBOT_OPENCLAW_BRIDGE_ALLOWED_ACTIONS",
     "xiaoxiao3d,weather,github,session_send"
 ).split(",") if x.strip()]
-OPENCLAW_BRIDGE_COMMAND = os.getenv("QQBOT_OPENCLAW_BRIDGE_COMMAND", "小小")
+OPENCLAW_BRIDGE_COMMAND = os.getenv("QQBOT_OPENCLAW_BRIDGE_COMMAND", "爪爪")
 OPENCLAW_BRIDGE_DEFAULT_SESSION = os.getenv("QQBOT_OPENCLAW_BRIDGE_DEFAULT_SESSION", "")
 OPENCLAW_BRIDGE_ALLOW_GROUP = os.getenv("QQBOT_OPENCLAW_BRIDGE_ALLOW_GROUP", "true").lower() == "true"
 OPENCLAW_BRIDGE_ALLOW_PRIVATE = os.getenv("QQBOT_OPENCLAW_BRIDGE_ALLOW_PRIVATE", "true").lower() == "true"
@@ -178,11 +178,11 @@ async def on_openclaw_status(ctx):
     )
 
 
-openclaw_direct = CommandPlugin(
+openclaw_direct = RegexPlugin(
     name="openclaw_bridge_direct",
-    command=OPENCLAW_BRIDGE_COMMAND,
+    pattern=rf"^(?:/)?{OPENCLAW_BRIDGE_COMMAND}(?:\s+.*)?$",
     description="send raw request to OpenClaw session via fixed command",
-    meta=PluginMeta(name="openclaw_bridge_direct", version="1.1.0", author="OpenClaw", description="固定指令直通 OpenClaw"),
+    meta=PluginMeta(name="openclaw_bridge_direct", version="1.2.0", author="OpenClaw", description="固定指令直通 OpenClaw"),
 )
 
 

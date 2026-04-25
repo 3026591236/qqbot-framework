@@ -1,0 +1,167 @@
+# user_plugins/simple_qa.py
+import json
+import logging
+from pathlib import Path
+from difflib import SequenceMatcher
+from app.core.plugin import CommandPlugin, PluginMeta
+from app.core.context import MessageContext
+
+logger = logging.getLogger(__name__)
+
+# 加载问答数据
+data_path = Path(__file__).parent.parent / "data" / "qa_pairs.json"
+qa_pairs = []
+if data_path.exists():
+    with open(data_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+        qa_pairs = data.get("qa_pairs", [])
+    logger.info(f"[simple_qa] 加载了 {len(qa_pairs)} 条问答对")
+
+# 保存数据
+def save_data():
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(data_path, 'w', encoding='utf-8') as f:
+        json.dump({"qa_pairs": qa_pairs}, f, ensure_ascii=False, indent=2)
+
+# 模糊匹配函数
+def match_keywords(text: str, keywords: list) -> bool:
+    text_lower = text.lower()
+    for keyword in keywords:
+        if keyword.lower() in text_lower:
+            return True
+    return False
+
+# ========== 管理命令 ==========
+
+# /问答菜单
+qa_menu = CommandPlugin(
+    name="qa_menu",
+    command="/问答菜单",
+    description="显示问答菜单",
+    meta=PluginMeta(name="qa_menu", version="1.0.0", author="OpenClaw", description="显示问答菜单"),
+)
+
+@qa_menu.handle
+async def on_qa_menu(ctx: MessageContext):
+    menu = """📖 **问答插件菜单**
+
+🔹 自动回复
+发送包含关键词的消息，机器人自动回复
+
+🔹 关键词列表
+"""
+    for qa in qa_pairs:
+        keywords = ", ".join(qa.get("keywords", [])[:3])
+        menu += f"  - {keywords}\n"
+    
+    menu += """
+🔹 管理命令
+/问答菜单 - 显示此菜单
+/问答列表 - 查看所有问答
+/问答添加 关键词 回复 - 添加问答
+/问答删除 <序号> - 删除问答
+"""
+    await ctx.reply(menu.strip())
+
+# /问答列表
+qa_list = CommandPlugin(
+    name="qa_list",
+    command="/问答列表",
+    description="查看所有问答",
+    meta=PluginMeta(name="qa_list", version="1.0.0", author="OpenClaw", description="查看所有问答"),
+)
+
+@qa_list.handle
+async def on_qa_list(ctx: MessageContext):
+    if not qa_pairs:
+        await ctx.reply("暂无问答配置")
+        return
+    
+    lines = ["📋 **问答列表**\n"]
+    for i, qa in enumerate(qa_pairs, 1):
+        keywords = ", ".join(qa.get("keywords", [])[:3])
+        resp = qa.get("response", "")[:30]
+        lines.append(f"{i}. {keywords} → {resp}...")
+    
+    await ctx.reply("\n".join(lines))
+
+# /问答添加
+qa_add = CommandPlugin(
+    name="qa_add",
+    command="/问答添加",
+    description="添加问答",
+    meta=PluginMeta(name="qa_add", version="1.0.0", author="OpenClaw", description="添加问答"),
+)
+
+@qa_add.handle
+async def on_qa_add(ctx: MessageContext):
+    # 格式：/问答添加 关键词 回复内容
+    text = ctx.text.replace("/问答添加", "").strip()
+    parts = text.split(maxsplit=1)
+    
+    if len(parts) < 2:
+        await ctx.reply("❌ 用法：/问答添加 关键词 回复内容\n示例：/问答添加 攻略 这是攻略回复")
+        return
+    
+    keywords_str, response = parts
+    keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
+    
+    qa_pairs.append({
+        "keywords": keywords,
+        "response": response
+    })
+    save_data()
+    
+    await ctx.reply(f"✅ 已添加问答：\n关键词：{', '.join(keywords)}\n回复：{response[:50]}...")
+
+# /问答删除
+qa_delete = CommandPlugin(
+    name="qa_delete",
+    command="/问答删除",
+    description="删除问答",
+    meta=PluginMeta(name="qa_delete", version="1.0.0", author="OpenClaw", description="删除问答"),
+)
+
+@qa_delete.handle
+async def on_qa_delete(ctx: MessageContext):
+    # 格式：/问答删除 1
+    text = ctx.text.replace("/问答删除", "").strip()
+    
+    try:
+        index = int(text) - 1
+        if 0 <= index < len(qa_pairs):
+            removed = qa_pairs.pop(index)
+            save_data()
+            await ctx.reply(f"✅ 已删除问答：{removed.get('keywords', [])}")
+        else:
+            await ctx.reply("❌ 序号超出范围")
+    except ValueError:
+        await ctx.reply("❌ 用法：/问答删除 <序号>\n示例：/问答删除 1")
+
+# ========== 自动回复逻辑 ==========
+# 监听所有包含"的"的消息（常见字，几乎能匹配所有中文消息）
+from app.core.plugin import KeywordPlugin
+
+auto_qa = KeywordPlugin(
+    name="auto_qa",
+    keyword="的",  # 监听包含"的"的消息
+    description="自动问答回复",
+    meta=PluginMeta(name="auto_qa", version="1.0.0", author="OpenClaw", description="自动问答回复"),
+)
+
+@auto_qa.handle
+async def on_message(ctx: MessageContext):
+    text = ctx.text.strip()
+    
+    # 跳过命令
+    if text.startswith("/"):
+        return
+    
+    for qa in qa_pairs:
+        keywords = qa.get("keywords", [])
+        response = qa.get("response", "")
+        
+        if match_keywords(text, keywords):
+            logger.info(f"[auto_qa] 匹配到关键词：{keywords} -> {response[:30]}")
+            await ctx.reply(response)
+            return

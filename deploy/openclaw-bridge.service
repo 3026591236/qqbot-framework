@@ -1,0 +1,15 @@
+[Unit]
+Description=qqbot-framework OpenClaw Bridge
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/.openclaw/workspace/qqbot-framework
+EnvironmentFile=/root/.openclaw/workspace/qqbot-framework/.env
+ExecStart=/root/.openclaw/workspace/qqbot-framework/scripts/run_openclaw_bridge.sh
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -24,7 +24,7 @@ QQBOT_OPENCLAW_BRIDGE_BASE_URL=http://127.0.0.1:3001
 QQBOT_OPENCLAW_BRIDGE_API_KEY=
 QQBOT_OPENCLAW_BRIDGE_DEFAULT_SESSION=
 QQBOT_OPENCLAW_BRIDGE_ADMIN_IDS=123456,234567
-QQBOT_OPENCLAW_BRIDGE_COMMAND=小小
+QQBOT_OPENCLAW_BRIDGE_COMMAND=爪爪
 QQBOT_OPENCLAW_BRIDGE_ALLOWED_ACTIONS=xiaoxiao3d,weather,github,session_send
 QQBOT_OPENCLAW_BRIDGE_ALLOW_GROUP=true
 QQBOT_OPENCLAW_BRIDGE_ALLOW_PRIVATE=true
@@ -40,7 +40,7 @@ QQBOT_OPENCLAW_BRIDGE_TIMEOUT=90
 
 ## 已实现命令
 
-- `小小 你的需求`（默认固定直通指令，可用环境变量改名）
+- `爪爪 你的需求`（默认固定直通指令，可用环境变量改名）
 - `OpenClaw帮助`
 - `OpenClaw状态`
 - `设置OpenClaw管理员 QQ号`
@@ -51,21 +51,21 @@ QQBOT_OPENCLAW_BRIDGE_TIMEOUT=90
 例如：
 
 ```text
-小小 用 xiaoxiao3d 登录后台
-小小 帮我查今天北京天气
-小小 去看一下 GitHub 仓库的最新 issue
+爪爪 用 xiaoxiao3d 登录后台
+爪爪 帮我查今天北京天气
+爪爪 去看一下 GitHub 仓库的最新 issue
 ```
 
 ## 固定指令模式
 
 默认固定指令是：
 
-- `小小`
+- `爪爪`
 
 当 QQ 消息是：
 
 ```text
-小小 你的需求内容
+爪爪 你的需求内容
 ```
 
 插件会把“你的需求内容”原样转发给 OpenClaw 默认会话，然后把 OpenClaw 的回复再返回给 QQ。
@@ -73,7 +73,7 @@ QQBOT_OPENCLAW_BRIDGE_TIMEOUT=90
 如果你想改唤醒词，可修改：
 
 ```env
-QQBOT_OPENCLAW_BRIDGE_COMMAND=小小
+QQBOT_OPENCLAW_BRIDGE_COMMAND=爪爪
 ```
 
 ## 动作白名单
