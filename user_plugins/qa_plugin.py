@@ -35,7 +35,7 @@ from app.core.context import MessageContext
 # 插件元数据 - 使用正则表达式匹配所有消息
 plugin = RegexPlugin(
     name="qa_fuzzy_plugin",
-    pattern=".*",  # 匹配所有消息
+    pattern=r"^(?!\s*(?:检查更新|更新状态|确认更新|取消更新|OpenClaw帮助|OpenClaw状态|设置OpenClaw管理员|删除OpenClaw管理员|OpenClaw管理员列表|配置OpenClaw桥接|爪爪|小小)(?:\s|$)).+",
     description="模糊问答自动回复插件",
     meta=PluginMeta(
         name="模糊问答",
@@ -177,6 +177,12 @@ class FuzzyQAPlugin:
 # 创建插件实例
 qa_plugin = FuzzyQAPlugin()
 
+RESERVED_PREFIXES = [
+    "检查更新", "更新状态", "确认更新", "取消更新",
+    "OpenClaw帮助", "OpenClaw状态", "设置OpenClaw管理员", "删除OpenClaw管理员", "OpenClaw管理员列表", "配置OpenClaw桥接",
+    "爪爪", "小小",
+]
+
 
 @plugin.handle
 async def on_message(ctx: MessageContext):
@@ -192,11 +198,16 @@ async def on_message(ctx: MessageContext):
     if message_text.startswith("/"):
         return False
 
-    # 3. 跳过包含"问答"的消息
+    # 3. 跳过系统/桥接保留命令
+    for prefix in RESERVED_PREFIXES:
+        if message_text == prefix or message_text.startswith(prefix + " "):
+            return False
+
+    # 4. 跳过包含"问答"的消息
     if "问答" in message_text:
         return False
 
-    # 4. 极速匹配
+    # 5. 极速匹配
     matched_qa = qa_plugin.find_matching_qa(message_text)
 
     if matched_qa:

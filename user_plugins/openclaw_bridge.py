@@ -45,6 +45,10 @@ OPENCLAW_BRIDGE_CONTINUE_WINDOW_SECONDS = int(os.getenv("QQBOT_OPENCLAW_BRIDGE_C
 _CONTINUATION_STATE: dict[str, float] = {}
 _ACTIVE_WATCHES: dict[str, dict[str, Any]] = {}
 _RECENT_TASK_STATE: dict[str, float] = {}
+_LAST_DELIVERED_SIGNATURES: dict[str, str] = {}
+_PENDING_GROUP_ATTACHMENTS: dict[str, dict[str, Any]] = {}
+_GROUP_ATTACHMENT_MERGE_WINDOW_SECONDS = 1.2
+_GROUP_INITIAL_DELIVERY_WAIT_SECONDS = 2.0
 _RECENT_TASK_WINDOW_SECONDS = 600
 _RESERVED_COMMAND_PREFIXES = [
     "OpenClaw帮助",
@@ -53,7 +57,12 @@ _RESERVED_COMMAND_PREFIXES = [
     "删除OpenClaw管理员",
     "OpenClaw管理员列表",
     "配置OpenClaw桥接",
+    "检查更新",
+    "更新状态",
+    "确认更新",
+    "取消更新",
 ]
+_RESERVED_COMMAND_PATTERN = "|".join(re.escape(x) for x in sorted(_RESERVED_COMMAND_PREFIXES, key=len, reverse=True))
 _CONTINUATION_EXIT_WORDS = {"退出", "结束", "关闭", "停止", "退出小小", "结束小小", "关闭小小", "停止小小", "退出爪爪", "结束爪爪", "关闭爪爪", "停止爪爪"}
 
 
@@ -155,6 +164,23 @@ def _build_openclaw_attachments(ctx) -> list[dict[str, str]]:
     for url in _extract_image_urls(ctx):
         attachments.append({"url": url, "mimeType": "image/png"})
     return attachments
+
+
+def _merge_group_pending_attachments(ctx, attachments: list[dict[str, str]]) -> list[dict[str, str]]:
+    key = _active_watch_key(ctx)
+    if not key:
+        return attachments
+    now = asyncio.get_event_loop().time()
+    pending = _PENDING_GROUP_ATTACHMENTS.get(key)
+    merged = list(attachments)
+    if isinstance(pending, dict) and pending.get("expiresAt", 0) >= now:
+        for item in pending.get("attachments") or []:
+            if item not in merged:
+                merged.append(item)
+        _PENDING_GROUP_ATTACHMENTS.pop(key, None)
+    elif pending:
+        _PENDING_GROUP_ATTACHMENTS.pop(key, None)
+    return merged
 
 
 def _extract_image_urls_from_text(text: str) -> list[str]:
@@ -452,6 +478,16 @@ async def _deliver_watch_result(api: OneBotAPI, watch: dict[str, Any]) -> None:
     user_id = watch.get("user_id")
     group_id = watch.get("group_id")
     is_group = bool(watch.get("is_group") and group_id)
+    dedupe_key = str(watch.get("taskKey") or (f"group:{group_id}:user:{user_id}" if is_group else f"private:{user_id}"))
+    signature = json.dumps({
+        "reply": reply if isinstance(reply, str) else str(reply or ""),
+        "images": all_image_urls,
+        "waiting": bool(watch.get("waitingForUser")),
+        "state": str(watch.get("state") or ""),
+    }, ensure_ascii=False, sort_keys=True)
+    if _LAST_DELIVERED_SIGNATURES.get(dedupe_key) == signature:
+        print(f"[openclaw_bridge] skip_duplicate_delivery key={dedupe_key!r}")
+        return
 
     for image_url in all_image_urls:
         try:
@@ -488,6 +524,7 @@ async def _deliver_watch_result(api: OneBotAPI, watch: dict[str, Any]) -> None:
             await api.send_group_msg(int(group_id), "已执行，但没有可返回的文本或图片")
         elif user_id:
             await api.send_private_msg(int(user_id), "已执行，但没有可返回的文本或图片")
+    _LAST_DELIVERED_SIGNATURES[dedupe_key] = signature
 
 
 async def _watch_and_push(key: str, api: OneBotAPI, watch_id: str) -> None:
@@ -497,13 +534,13 @@ async def _watch_and_push(key: str, api: OneBotAPI, watch_id: str) -> None:
             result = await _poll_watch(watch_id)
             state = str(result.get("state") or "unknown")
             if result.get("done"):
-                merged = _ACTIVE_WATCHES.get(key, {}) | result
+                merged = _ACTIVE_WATCHES.get(key, {}) | result | {"taskKey": key}
                 await _deliver_watch_result(api, merged)
                 if merged.get("waitingForUser"):
                     should_clear_active = False
                 break
             if state in {"failed", "cancelled", "timeout"}:
-                await _deliver_watch_result(api, _ACTIVE_WATCHES.get(key, {}) | result)
+                await _deliver_watch_result(api, _ACTIVE_WATCHES.get(key, {}) | result | {"taskKey": key})
                 break
             await asyncio.sleep(2)
     except Exception as exc:
@@ -533,31 +570,59 @@ async def _handle_openclaw_chat(ctx, content: str, attachments: list[dict[str, s
     _touch_continuation(ctx)
     _touch_recent_task(ctx)
     print(f"[openclaw_bridge] continuation_touch key={_continuation_key(ctx)!r} text={content[:80]!r}")
-    await _deliver_watch_result(ctx.api, {
-        "user_id": ctx.user_id,
-        "group_id": ctx.group_id,
-        "is_group": ctx.is_group,
-        **result,
-    })
 
     try:
         key = _active_watch_key(ctx) or _continuation_key(ctx) or f"msg:{ctx.message_type}:{ctx.group_id or 0}:{ctx.user_id or 0}"
         existing = _ACTIVE_WATCHES.get(key)
         if _watch_is_active(existing):
             print(f"[openclaw_bridge] watch_reuse key={key!r} watch_id={existing.get('watchId')}")
-            return
-        watch_started = await _start_watch(timeout_seconds=600)
-        watch_id = str(watch_started.get("watchId") or "").strip()
-        if watch_id:
-            task = asyncio.create_task(_watch_and_push(key, ctx.api, watch_id))
-            _ACTIVE_WATCHES[key] = {
-                "watchId": watch_id,
+        else:
+            watch_started = await _start_watch(timeout_seconds=600)
+            watch_id = str(watch_started.get("watchId") or "").strip()
+            if watch_id:
+                task = asyncio.create_task(_watch_and_push(key, ctx.api, watch_id))
+                _ACTIVE_WATCHES[key] = {
+                    "watchId": watch_id,
+                    "user_id": ctx.user_id,
+                    "group_id": ctx.group_id,
+                    "is_group": ctx.is_group,
+                    "task": task,
+                    "taskKey": key,
+                }
+                print(f"[openclaw_bridge] watch_started key={key!r} watch_id={watch_id}")
+
+        should_deliver_now = not (ctx.is_group and _watch_is_active(_ACTIVE_WATCHES.get(key)))
+        if should_deliver_now:
+            await _deliver_watch_result(ctx.api, {
                 "user_id": ctx.user_id,
                 "group_id": ctx.group_id,
                 "is_group": ctx.is_group,
-                "task": task,
-            }
-            print(f"[openclaw_bridge] watch_started key={key!r} watch_id={watch_id}")
+                "taskKey": key,
+                **result,
+            })
+        else:
+            print(f"[openclaw_bridge] defer_group_initial_delivery key={key!r}")
+            await asyncio.sleep(_GROUP_INITIAL_DELIVERY_WAIT_SECONDS)
+            if _LAST_DELIVERED_SIGNATURES.get(key):
+                print(f"[openclaw_bridge] skip_deferred_initial_delivery key={key!r}")
+            else:
+                await _deliver_watch_result(ctx.api, {
+                    "user_id": ctx.user_id,
+                    "group_id": ctx.group_id,
+                    "is_group": ctx.is_group,
+                    "taskKey": key,
+                    **result,
+                })
+
+        if result.get("waitingForUser"):
+            _RECENT_TASK_STATE[key] = asyncio.get_event_loop().time() + _RECENT_TASK_WINDOW_SECONDS
+            _ACTIVE_WATCHES.setdefault(key, {}).update({
+                "user_id": ctx.user_id,
+                "group_id": ctx.group_id,
+                "is_group": ctx.is_group,
+                "taskKey": key,
+                "waitingForUser": True,
+            })
     except Exception as exc:
         print(f"[openclaw_bridge] watch_start_failed error={exc}")
 
@@ -695,9 +760,9 @@ async def on_configure_openclaw(ctx):
 
 openclaw_continue = RegexPlugin(
     name="openclaw_bridge_continue",
-    pattern=r"^.+$",
+    pattern=rf"^(?!\s*(?:{_RESERVED_COMMAND_PATTERN}|攻略|怎么玩|新手指南|入门|下载|安装包|客户端|下载地址|路费|交通|怎么过去|传送)(?:\s|$)).+$",
     description="continue private openclaw chat without wake word",
-    meta=PluginMeta(name="openclaw_bridge_continue", version="1.0.0", author="OpenClaw", description="私聊连续对话接管"),
+    meta=PluginMeta(name="openclaw_bridge_continue", version="1.0.2", author="OpenClaw", description="私聊连续对话接管"),
 )
 
 
@@ -735,6 +800,28 @@ async def on_openclaw_continue(ctx):
         return
     payload_text = _build_openclaw_payload(ctx, text)
     payload_attachments = _build_openclaw_attachments(ctx)
+
+    if ctx.is_group and payload_attachments and not text:
+        key = _active_watch_key(ctx)
+        if key:
+            _PENDING_GROUP_ATTACHMENTS[key] = {
+                "attachments": payload_attachments,
+                "expiresAt": asyncio.get_event_loop().time() + _GROUP_ATTACHMENT_MERGE_WINDOW_SECONDS,
+            }
+            print(f"[openclaw_bridge] continuation_buffer_group_attachments key={key!r} attachments={len(payload_attachments)}")
+            await asyncio.sleep(_GROUP_ATTACHMENT_MERGE_WINDOW_SECONDS)
+            pending = _PENDING_GROUP_ATTACHMENTS.get(key)
+            if isinstance(pending, dict) and pending.get("attachments") == payload_attachments:
+                _PENDING_GROUP_ATTACHMENTS.pop(key, None)
+                print(f"[openclaw_bridge] continuation_flush_group_attachments key={key!r} attachments={len(payload_attachments)}")
+                await _handle_openclaw_chat(ctx, payload_text, payload_attachments)
+            return
+
+    if ctx.is_group:
+        payload_attachments = _merge_group_pending_attachments(ctx, payload_attachments)
+        if payload_attachments and not text:
+            payload_text = "请结合我发送的图片一起处理。"
+
     print(f"[openclaw_bridge] continuation_hit key={_continuation_key(ctx)!r} text={payload_text[:80]!r} attachments={len(payload_attachments)}")
     await _handle_openclaw_chat(ctx, payload_text, payload_attachments)
 
