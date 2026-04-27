@@ -46,6 +46,7 @@ _CONTINUATION_STATE: dict[str, float] = {}
 _ACTIVE_WATCHES: dict[str, dict[str, Any]] = {}
 _RECENT_TASK_STATE: dict[str, float] = {}
 _LAST_DELIVERED_SIGNATURES: dict[str, str] = {}
+_LAST_WATCH_PROGRESS_SIGNATURES: dict[str, str] = {}
 _PENDING_GROUP_ATTACHMENTS: dict[str, dict[str, Any]] = {}
 _GROUP_ATTACHMENT_MERGE_WINDOW_SECONDS = 1.2
 _GROUP_INITIAL_DELIVERY_WAIT_SECONDS = 2.0
@@ -73,6 +74,16 @@ def _normalize_command_text(text: str) -> str:
     text = text.replace("\u3000", " ")
     parts = [part.strip() for part in text.splitlines() if part.strip()]
     text = " ".join(parts).strip()
+    while text.startswith("[CQ:at,"):
+        end = text.find("]")
+        if end == -1:
+            break
+        text = text[end + 1:].lstrip()
+    return text
+
+
+def _strip_leading_cq_at(text: str) -> str:
+    text = (text or "").strip()
     while text.startswith("[CQ:at,"):
         end = text.find("]")
         if end == -1:
@@ -208,7 +219,11 @@ def _command_variants() -> list[str]:
 
 
 def _extract_after_command(ctx, command: str | None = None) -> str:
-    text = _normalize_command_text(ctx.text or "")
+    raw_text = ctx.raw_event.get("message") if isinstance(ctx.raw_event, dict) else None
+    raw_text = raw_text if isinstance(raw_text, str) else (ctx.text or "")
+    raw_text = (raw_text or "").strip()
+    normalized = _normalize_command_text(raw_text)
+    without_at = _normalize_command_text(_strip_leading_cq_at(raw_text))
     variants: list[str] = []
     for cmd in ([command] if command else _command_variants()):
         if not cmd:
@@ -221,12 +236,15 @@ def _extract_after_command(ctx, command: str | None = None) -> str:
     for variant in variants:
         if variant not in deduped:
             deduped.append(variant)
-    for variant in deduped:
-        if text == variant:
-            return ""
-        prefix = variant + " "
-        if text.startswith(prefix):
-            return text[len(prefix):].strip()
+    for text in [normalized, without_at]:
+        for variant in deduped:
+            if text == variant:
+                return ""
+            prefix = variant + " "
+            if text.startswith(prefix):
+                return text[len(prefix):].strip()
+    if isinstance(raw_text, str) and raw_text.startswith("[CQ:at,"):
+        return without_at.strip()
     return ""
 
 
@@ -439,9 +457,9 @@ _OPENCLAW_BRIDGE_COMMAND_PATTERN = "|".join(re.escape(x) for x in _command_varia
 
 openclaw_direct = RegexPlugin(
     name="openclaw_bridge_direct",
-    pattern=rf"^(?:\[CQ:at,[^\]]+\]\s*)*(?:/)?(?:{_OPENCLAW_BRIDGE_COMMAND_PATTERN})(?:\s+.*)?$",
+    pattern=rf"^(?:(?:\[CQ:at,[^\]]+\]\s*)(?:(?:/)?(?:{_OPENCLAW_BRIDGE_COMMAND_PATTERN})(?:\s+.*)?|.+)|(?:\[CQ:at,[^\]]+\]\s*)*(?:/)?(?:{_OPENCLAW_BRIDGE_COMMAND_PATTERN})(?:\s+.*)?)$",
     description="send raw request to OpenClaw session via fixed command",
-    meta=PluginMeta(name="openclaw_bridge_direct", version="1.4.0", author="OpenClaw", description="固定指令直通 OpenClaw"),
+    meta=PluginMeta(name="openclaw_bridge_direct", version="1.5.0", author="OpenClaw", description="固定指令直通 OpenClaw"),
 )
 
 
@@ -533,16 +551,29 @@ async def _watch_and_push(key: str, api: OneBotAPI, watch_id: str) -> None:
         while True:
             result = await _poll_watch(watch_id)
             state = str(result.get("state") or "unknown")
-            if result.get("done"):
-                merged = _ACTIVE_WATCHES.get(key, {}) | result | {"taskKey": key}
+            merged = _ACTIVE_WATCHES.get(key, {}) | result | {"taskKey": key}
+            reply_preview = merged.get("reply") if isinstance(merged.get("reply"), str) else str(merged.get("reply") or "")
+            print(f"[openclaw_bridge] watch_poll key={key!r} watch_id={watch_id} state={state!r} done={bool(result.get('done'))} waiting={bool(merged.get('waitingForUser'))} reply={reply_preview[:120]!r}")
+
+            progress_signature = json.dumps({
+                "state": state,
+                "reply": merged.get("reply") if isinstance(merged.get("reply"), str) else str(merged.get("reply") or ""),
+                "images": merged.get("imageUrls") or [],
+                "waiting": bool(merged.get("waitingForUser")),
+                "done": bool(merged.get("done")),
+            }, ensure_ascii=False, sort_keys=True)
+
+            if progress_signature != _LAST_WATCH_PROGRESS_SIGNATURES.get(key) and (merged.get("reply") or merged.get("imageUrls")):
+                _LAST_WATCH_PROGRESS_SIGNATURES[key] = progress_signature
                 await _deliver_watch_result(api, merged)
+
+            if result.get("done"):
                 if merged.get("waitingForUser"):
                     should_clear_active = False
                 break
             if state in {"failed", "cancelled", "timeout"}:
-                await _deliver_watch_result(api, _ACTIVE_WATCHES.get(key, {}) | result | {"taskKey": key})
                 break
-            await asyncio.sleep(2)
+            await asyncio.sleep(1.2 if str(key).startswith('group:') else 2)
     except Exception as exc:
         watch = _ACTIVE_WATCHES.get(key, {})
         user_id = watch.get("user_id")
@@ -559,9 +590,10 @@ async def _watch_and_push(key: str, api: OneBotAPI, watch_id: str) -> None:
             _RECENT_TASK_STATE[key] = asyncio.get_event_loop().time() + _RECENT_TASK_WINDOW_SECONDS
         if should_clear_active:
             _ACTIVE_WATCHES.pop(key, None)
+            _LAST_WATCH_PROGRESS_SIGNATURES.pop(key, None)
 
 
-async def _handle_openclaw_chat(ctx, content: str, attachments: list[dict[str, str]] | None = None) -> None:
+async def _handle_openclaw_chat(ctx, content: str, attachments: list[dict[str, str]] | None = None, *, force_new_watch: bool = False) -> None:
     try:
         result = await _send_to_session(content, attachments=attachments)
     except Exception as exc:
@@ -574,6 +606,16 @@ async def _handle_openclaw_chat(ctx, content: str, attachments: list[dict[str, s
     try:
         key = _active_watch_key(ctx) or _continuation_key(ctx) or f"msg:{ctx.message_type}:{ctx.group_id or 0}:{ctx.user_id or 0}"
         existing = _ACTIVE_WATCHES.get(key)
+        if force_new_watch and _watch_is_active(existing):
+            old_task = existing.get("task") if isinstance(existing, dict) else None
+            if old_task and hasattr(old_task, "cancel"):
+                old_task.cancel()
+            _ACTIVE_WATCHES.pop(key, None)
+            _LAST_DELIVERED_SIGNATURES.pop(key, None)
+            _LAST_WATCH_PROGRESS_SIGNATURES.pop(key, None)
+            existing = None
+            print(f"[openclaw_bridge] watch_reset_for_new_task key={key!r}")
+
         if _watch_is_active(existing):
             print(f"[openclaw_bridge] watch_reuse key={key!r} watch_id={existing.get('watchId')}")
         else:
@@ -581,6 +623,8 @@ async def _handle_openclaw_chat(ctx, content: str, attachments: list[dict[str, s
             watch_id = str(watch_started.get("watchId") or "").strip()
             if watch_id:
                 task = asyncio.create_task(_watch_and_push(key, ctx.api, watch_id))
+                _LAST_DELIVERED_SIGNATURES.pop(key, None)
+                _LAST_WATCH_PROGRESS_SIGNATURES.pop(key, None)
                 _ACTIVE_WATCHES[key] = {
                     "watchId": watch_id,
                     "user_id": ctx.user_id,
@@ -591,28 +635,13 @@ async def _handle_openclaw_chat(ctx, content: str, attachments: list[dict[str, s
                 }
                 print(f"[openclaw_bridge] watch_started key={key!r} watch_id={watch_id}")
 
-        should_deliver_now = not (ctx.is_group and _watch_is_active(_ACTIVE_WATCHES.get(key)))
-        if should_deliver_now:
-            await _deliver_watch_result(ctx.api, {
-                "user_id": ctx.user_id,
-                "group_id": ctx.group_id,
-                "is_group": ctx.is_group,
-                "taskKey": key,
-                **result,
-            })
-        else:
-            print(f"[openclaw_bridge] defer_group_initial_delivery key={key!r}")
-            await asyncio.sleep(_GROUP_INITIAL_DELIVERY_WAIT_SECONDS)
-            if _LAST_DELIVERED_SIGNATURES.get(key):
-                print(f"[openclaw_bridge] skip_deferred_initial_delivery key={key!r}")
-            else:
-                await _deliver_watch_result(ctx.api, {
-                    "user_id": ctx.user_id,
-                    "group_id": ctx.group_id,
-                    "is_group": ctx.is_group,
-                    "taskKey": key,
-                    **result,
-                })
+        await _deliver_watch_result(ctx.api, {
+            "user_id": ctx.user_id,
+            "group_id": ctx.group_id,
+            "is_group": ctx.is_group,
+            "taskKey": key,
+            **result,
+        })
 
         if result.get("waitingForUser"):
             _RECENT_TASK_STATE[key] = asyncio.get_event_loop().time() + _RECENT_TASK_WINDOW_SECONDS
@@ -643,7 +672,7 @@ async def on_openclaw_direct(ctx):
         aliases = " / ".join(_command_variants())
         await ctx.reply(f"用法：{aliases} 你的需求")
         return
-    await _handle_openclaw_chat(ctx, _build_openclaw_payload(ctx, content), _build_openclaw_attachments(ctx))
+    await _handle_openclaw_chat(ctx, _build_openclaw_payload(ctx, content), _build_openclaw_attachments(ctx), force_new_watch=True)
 
 
 set_openclaw_admin = CommandPlugin(
@@ -814,7 +843,7 @@ async def on_openclaw_continue(ctx):
             if isinstance(pending, dict) and pending.get("attachments") == payload_attachments:
                 _PENDING_GROUP_ATTACHMENTS.pop(key, None)
                 print(f"[openclaw_bridge] continuation_flush_group_attachments key={key!r} attachments={len(payload_attachments)}")
-                await _handle_openclaw_chat(ctx, payload_text, payload_attachments)
+                await _handle_openclaw_chat(ctx, payload_text, payload_attachments, force_new_watch=False)
             return
 
     if ctx.is_group:
@@ -823,7 +852,7 @@ async def on_openclaw_continue(ctx):
             payload_text = "请结合我发送的图片一起处理。"
 
     print(f"[openclaw_bridge] continuation_hit key={_continuation_key(ctx)!r} text={payload_text[:80]!r} attachments={len(payload_attachments)}")
-    await _handle_openclaw_chat(ctx, payload_text, payload_attachments)
+    await _handle_openclaw_chat(ctx, payload_text, payload_attachments, force_new_watch=False)
 
 
 plugins = [

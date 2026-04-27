@@ -220,7 +220,7 @@ async def _download_attachments(attachments: list[ImageAttachment] | None) -> li
                 resp.raise_for_status()
             except Exception as exc:
                 logger.exception("attachment download failed url=%s", url)
-                raise HTTPException(status_code=502, detail=f"attachment download failed: {url} :: {exc}")
+                continue
             mime_type = item.mimeType or resp.headers.get("content-type", "image/png").split(";")[0].strip() or "image/png"
             logger.info("attachment downloaded url=%s mime=%s size=%s", url, mime_type, len(resp.content))
             results.append({
@@ -276,6 +276,7 @@ async def _connect_gateway():
         OPENCLAW_GATEWAY_WS_URL,
         open_timeout=OPENCLAW_TIMEOUT,
         close_timeout=5,
+        max_size=8 * 1024 * 1024,
         origin="http://127.0.0.1:3001",
     )
     client = {
@@ -374,6 +375,27 @@ async def _wait_for_assistant_reply(ws, session_key: str, timeout_seconds: float
             if final_message is not None:
                 break
 
+    if final_message is None:
+        history = await _gateway_request(ws, "chat.history", {
+            "sessionKey": session_key,
+            "limit": 20,
+        })
+        items = None
+        if isinstance(history, dict):
+            items = history.get("messages") or history.get("items")
+        if isinstance(items, list):
+            for item in reversed(items):
+                if not isinstance(item, dict):
+                    continue
+                if item.get("role") != "assistant":
+                    continue
+                openclaw_meta = item.get("__openclaw") or {}
+                seq = openclaw_meta.get("seq")
+                if not isinstance(seq, int) or seq <= baseline_seq:
+                    continue
+                if _message_has_final_payload(item):
+                    final_message = item
+                    break
     if final_message is None:
         raise HTTPException(status_code=504, detail="wait chat final timeout")
     return final_message

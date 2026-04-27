@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from app.db import get_conn
 
@@ -8,14 +9,19 @@ from app.db import get_conn
 BASE_REWARD = 1
 MAX_STREAK_BONUS = 4
 MAKEUP_COST = 2
+APP_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _scope_group_id(group_id: int | None) -> int:
     return group_id or 0
 
 
+def _now() -> datetime:
+    return datetime.now(APP_TZ)
+
+
 def _today() -> datetime.date:
-    return datetime.utcnow().date()
+    return _now().date()
 
 
 def _parse_date(raw: str | None):
@@ -84,7 +90,7 @@ def daily_checkin(user_id: int, group_id: int | None, reward: int = BASE_REWARD)
     gid = _scope_group_id(group_id)
     today = _today()
     yesterday = today - timedelta(days=1)
-    now = datetime.utcnow().isoformat(timespec="seconds")
+    now = _now().isoformat(timespec="seconds")
 
     with get_conn() as conn:
         row = _get_user_row(conn, user_id, gid)
@@ -158,7 +164,7 @@ def makeup_checkin(user_id: int, group_id: int | None, cost: int = MAKEUP_COST, 
     today = _today()
     yesterday = today - timedelta(days=1)
     before_yesterday = today - timedelta(days=2)
-    now = datetime.utcnow().isoformat(timespec="seconds")
+    now = _now().isoformat(timespec="seconds")
 
     with get_conn() as conn:
         row = _get_user_row(conn, user_id, gid)
