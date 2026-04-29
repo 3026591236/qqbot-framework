@@ -10,6 +10,9 @@ REPO_NAME=${REPO_NAME:-}
 REPO_REF=${REPO_REF:-main}
 APP_DIR=${APP_DIR:-/opt/qqbot-framework}
 WORKDIR=${WORKDIR:-/tmp/qqbot-framework-bootstrap}
+GITHUB_RAW_BASE=${GITHUB_RAW_BASE:-https://raw.githubusercontent.com}
+GITHUB_ARCHIVE_BASE=${GITHUB_ARCHIVE_BASE:-https://github.com}
+GITHUB_API_BASE=${GITHUB_API_BASE:-https://api.github.com}
 
 info() { printf '%s\n' "[INFO] $*"; }
 warn() { printf '%s\n' "[WARN] $*"; }
@@ -45,7 +48,7 @@ fetch_text() {
 }
 
 fetch_commit_sha() {
-  api_url="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/commits/${REPO_REF}"
+  api_url="${GITHUB_API_BASE}/repos/${REPO_OWNER}/${REPO_NAME}/commits/${REPO_REF}"
   json=$(fetch_text "$api_url" 2>/dev/null || true)
   if [ -n "$json" ]; then
     printf '%s' "$json" | sed -n 's/.*"sha"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F]\{40\}\)".*/\1/p' | head -n1
@@ -63,7 +66,7 @@ if ! need_cmd tar; then
   exit 1
 fi
 
-ARCHIVE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/${REPO_REF}.tar.gz"
+ARCHIVE_URL="${GITHUB_ARCHIVE_BASE}/${REPO_OWNER}/${REPO_NAME}/archive/refs/heads/${REPO_REF}.tar.gz"
 ARCHIVE_FILE="${WORKDIR}/repo.tar.gz"
 EXTRACT_DIR="${WORKDIR}/src"
 
@@ -72,6 +75,8 @@ info "仓库：${REPO_OWNER}/${REPO_NAME}"
 info "分支：${REPO_REF}"
 info "安装目录：${APP_DIR}"
 info "源码下载地址：${ARCHIVE_URL}"
+info "可选 raw 镜像前缀：${GITHUB_RAW_BASE}"
+info "可选 GitHub API 前缀：${GITHUB_API_BASE}"
 
 BUILD_COMMIT=$(fetch_commit_sha || true)
 if [ -n "$BUILD_COMMIT" ]; then

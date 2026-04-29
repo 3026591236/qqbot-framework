@@ -9,6 +9,7 @@ REPO_OWNER=${REPO_OWNER:-}
 REPO_NAME=${REPO_NAME:-}
 REPO_REF=${REPO_REF:-main}
 APP_DIR=${APP_DIR:-/opt/qqbot-framework}
+GIT_CLONE_URL=${GIT_CLONE_URL:-}
 
 info() { printf '%s\n' "[INFO] $*"; }
 warn() { printf '%s\n' "[WARN] $*"; }
@@ -26,7 +27,7 @@ if ! need_cmd git; then
   exit 1
 fi
 
-REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
+REPO_URL=${GIT_CLONE_URL:-"https://github.com/${REPO_OWNER}/${REPO_NAME}.git"}
 PARENT_DIR=$(dirname "$APP_DIR")
 APP_NAME=$(basename "$APP_DIR")
 
@@ -35,6 +36,7 @@ info "仓库：${REPO_OWNER}/${REPO_NAME}"
 info "分支：${REPO_REF}"
 info "安装目录：${APP_DIR}"
 info "仓库地址：${REPO_URL}"
+info "提示：国内机器可通过 GIT_CLONE_URL 指向镜像 git 地址"
 
 mkdir -p "$PARENT_DIR"
 

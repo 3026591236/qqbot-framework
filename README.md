@@ -107,11 +107,29 @@ chmod +x deploy/install.sh
 
 ### 方式二：GitHub 链接一键安装（适合服务器直接执行）
 
+> 如果是国内服务器，优先建议给安装器传国内镜像参数，否则常见失败点会包括：GitHub raw、GitHub 压缩包下载、PyPI 默认源、Docker 镜像拉取。
+
 可以直接在服务器上执行：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/3026591236/qqbot-framework/main/deploy/bootstrap-install.sh | \
   REPO_OWNER=3026591236 REPO_NAME=qqbot-framework REPO_REF=main APP_DIR=/opt/qqbot-framework sh
+```
+
+国内服务器推荐示例：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/3026591236/qqbot-framework/main/deploy/bootstrap-install.sh | \
+  REPO_OWNER=3026591236 \
+  REPO_NAME=qqbot-framework \
+  REPO_REF=main \
+  APP_DIR=/opt/qqbot-framework \
+  GITHUB_ARCHIVE_BASE=https://ghfast.top/https://github.com \
+  GITHUB_API_BASE=https://ghfast.top/https://api.github.com \
+  PIP_INDEX_URL_DEFAULT=https://pypi.tuna.tsinghua.edu.cn/simple \
+  PIP_TRUSTED_HOST_DEFAULT=pypi.tuna.tsinghua.edu.cn \
+  NAPCAT_IMAGE_DEFAULT=registry.cn-hangzhou.aliyuncs.com/qingchencloud_mirror/mlikiowa-napcat-docker:latest \
+  sh
 ```
 
 这个 bootstrap 脚本会：
@@ -136,6 +154,21 @@ curl -fsSL https://raw.githubusercontent.com/3026591236/qqbot-framework/main/dep
 ```bash
 curl -fsSL https://raw.githubusercontent.com/3026591236/qqbot-framework/main/deploy/bootstrap-git-install.sh | \
   REPO_OWNER=3026591236 REPO_NAME=qqbot-framework REPO_REF=main APP_DIR=/opt/qqbot-framework sh
+```
+
+国内服务器推荐示例：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/3026591236/qqbot-framework/main/deploy/bootstrap-git-install.sh | \
+  REPO_OWNER=3026591236 \
+  REPO_NAME=qqbot-framework \
+  REPO_REF=main \
+  APP_DIR=/opt/qqbot-framework \
+  GIT_CLONE_URL=https://ghfast.top/https://github.com/3026591236/qqbot-framework.git \
+  PIP_INDEX_URL_DEFAULT=https://pypi.tuna.tsinghua.edu.cn/simple \
+  PIP_TRUSTED_HOST_DEFAULT=pypi.tuna.tsinghua.edu.cn \
+  NAPCAT_IMAGE_DEFAULT=registry.cn-hangzhou.aliyuncs.com/qingchencloud_mirror/mlikiowa-napcat-docker:latest \
+  sh
 ```
 
 这个脚本会：

@@ -13,6 +13,9 @@ LOGIN_MODE="qrcode"
 PYTHON_BIN=""
 OS_ID=""
 OS_ID_LIKE=""
+PIP_INDEX_URL_DEFAULT=${PIP_INDEX_URL_DEFAULT:-https://pypi.tuna.tsinghua.edu.cn/simple}
+PIP_TRUSTED_HOST_DEFAULT=${PIP_TRUSTED_HOST_DEFAULT:-pypi.tuna.tsinghua.edu.cn}
+NAPCAT_IMAGE_DEFAULT=${NAPCAT_IMAGE_DEFAULT:-mlikiowa/napcat-docker:latest}
 
 info() { printf '%s\n' "[INFO] $*"; }
 warn() { printf '%s\n' "[WARN] $*"; }
@@ -511,27 +514,27 @@ EOF
 }
 
 upgrade_pip_tooling() {
-  if python -m pip install --upgrade pip setuptools wheel; then
+  if python -m pip install -i "$PIP_INDEX_URL_DEFAULT" --trusted-host "$PIP_TRUSTED_HOST_DEFAULT" --upgrade pip setuptools wheel; then
     return 0
   fi
-  warn "默认 pip 源升级 pip/setuptools/wheel 失败，尝试官方 PyPI"
+  warn "国内 pip 源升级 pip/setuptools/wheel 失败，尝试官方 PyPI"
   python -m pip install -i https://pypi.org/simple --upgrade pip setuptools wheel
 }
 
 pip_install_with_fallback() {
   req_file=$1
 
-  if python -m pip install -r "$req_file"; then
+  if python -m pip install -i "$PIP_INDEX_URL_DEFAULT" --trusted-host "$PIP_TRUSTED_HOST_DEFAULT" -r "$req_file"; then
     return 0
   fi
 
-  warn "默认 pip 源安装失败，尝试先升级 pip 工具链后重试"
+  warn "国内 pip 源安装失败，尝试先升级 pip 工具链后重试"
   upgrade_pip_tooling || true
-  if python -m pip install -r "$req_file"; then
+  if python -m pip install -i "$PIP_INDEX_URL_DEFAULT" --trusted-host "$PIP_TRUSTED_HOST_DEFAULT" -r "$req_file"; then
     return 0
   fi
 
-  warn "默认 pip 源仍失败，切换到官方 PyPI 源重试"
+  warn "国内 pip 源仍失败，切换到官方 PyPI 源重试"
   if python -m pip install -i https://pypi.org/simple -r "$req_file"; then
     return 0
   fi
@@ -680,7 +683,7 @@ start_napcat_docker() {
     --add-host host.docker.internal:host-gateway \
     -v "$APP_DIR/napcat/config:/app/napcat/config" \
     -v "$APP_DIR/ntqq:/app/.config/QQ" \
-    mlikiowa/napcat-docker:latest >/dev/null
+    "$NAPCAT_IMAGE_DEFAULT" >/dev/null
   ok "NapCat 已启动"
   sleep 5
   show_napcat_runtime_hint
@@ -718,6 +721,8 @@ show_env_report() {
   echo "docker     : $( command -v docker 2>/dev/null || echo missing )"
   echo "systemctl  : $( command -v systemctl 2>/dev/null || echo missing )"
   echo "curl/wget  : $( (command -v curl || command -v wget) 2>/dev/null | head -n1 || echo missing )"
+  echo "pip镜像源  : ${PIP_INDEX_URL_DEFAULT}"
+  echo "NapCat镜像 : ${NAPCAT_IMAGE_DEFAULT}"
   echo "=========================================="
   echo
 }
